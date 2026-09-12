@@ -7,7 +7,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Import every module defining a model so Base.metadata is complete.
-# Each new feature adds its import here.
+# Each new feature adds its import here. It sits ABOVE the src.* from-imports
+# because isort orders a plain `import x` before `from x import y` within the
+# same section — placed below them, `ruff check .` fails on I001, and CI runs
+# that gate.
 import src.parameters.persistence.models  # noqa: F401
 from src.config.settings import get_settings
 from src.database.base import Base
