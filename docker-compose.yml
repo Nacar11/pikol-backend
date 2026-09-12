@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: pikol-postgres
+    environment:
+      POSTGRES_USER: pikol
+      POSTGRES_PASSWORD: pikol
+      POSTGRES_DB: pikol
+    ports:
+      # Host 5433, not 5432: another project (asima) holds 5432 on this
+      # machine. The container still listens on 5432 internally, so
+      # `docker compose exec postgres psql` is unaffected. CI does not use
+      # this file — it runs its own service container on 5432.
+      - "5433:5432"
+    volumes:
+      - pikol-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pikol"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pikol-pgdata:
