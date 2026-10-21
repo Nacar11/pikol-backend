@@ -7,6 +7,7 @@ from src.auth.rate_limit import handle_rate_limited, limiter
 from src.config.settings import Settings, get_settings
 from src.courts.controllers.admin import router as admin_courts_router
 from src.health.controllers.health import router as health_router
+from src.pricing.controllers.admin import router as admin_pricing_router
 from src.users.controllers.admin import router as admin_users_router
 from src.users.controllers.me import router as me_router
 from src.utils.errors import register_exception_handlers
@@ -57,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(catalog_router)
     app.include_router(admin_venues_router)
     app.include_router(admin_courts_router)
+    app.include_router(admin_pricing_router)
     return app
 
 
