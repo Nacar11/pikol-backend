@@ -64,6 +64,15 @@ class ClosureRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class ResolveRequest(BaseModel):
+    """How a human settled a paid-but-unhousable booking — refund, rebook,
+    or void. Recorded in the booking's notes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    resolution: str = Field(min_length=1, max_length=500)
+
+
 class PlayerCancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

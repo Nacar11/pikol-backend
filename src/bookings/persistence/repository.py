@@ -258,8 +258,11 @@ class BookingRepository:
         between: tuple[datetime, datetime] | None = None,
         booking_status: BookingStatus | None = None,
         type: BookingType | None = None,
+        needs_resolution: bool | None = None,
     ) -> tuple[list[BookingGroupModel], int]:
         filters: list[Any] = [scope.where(CourtModel.venue_id)]
+        if needs_resolution is not None:
+            filters.append(BookingGroupModel.needs_resolution.is_(needs_resolution))
         if venue_id is not None:
             filters.append(CourtModel.venue_id == venue_id)
         if court_id is not None:

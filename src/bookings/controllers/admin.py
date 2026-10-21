@@ -10,6 +10,7 @@ from src.bookings.dto import (
     AdminBookingOut,
     MarkPaidRequest,
     OutcomeRequest,
+    ResolveRequest,
     StaffCancelRequest,
     WalkInRequest,
 )
@@ -55,6 +56,26 @@ async def list_bookings(
         between=manila_day_bounds(day) if day is not None else None,
         booking_status=booking_status,
         type=type,
+    )
+    now = datetime.now(UTC)
+    return Page.of(
+        [AdminBookingOut.of_admin(g, now) for g in groups], total=total, page=page, limit=limit
+    )
+
+
+@router.get("/unfulfilled")
+async def unfulfilled(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    _: UserModel = Depends(read_any),
+    scope: VenueScope = Depends(get_venue_scope),
+    session: AsyncSession = Depends(get_session),
+) -> Page[AdminBookingOut]:
+    """The resolution queue (spec §5.5): money with no court — a payment
+    that landed after its slots went to someone else, or a double charge.
+    Declared before /{booking_id} so "unfulfilled" is not read as an id."""
+    groups, total = await booking_repository.list_scoped(
+        session, scope=scope, page=page, limit=limit, needs_resolution=True
     )
     now = datetime.now(UTC)
     return Page.of(
@@ -120,4 +141,16 @@ async def set_outcome(
     session: AsyncSession = Depends(get_session),
 ) -> AdminBookingOut:
     group = await booking_service.set_outcome(session, booking_id, body.outcome, scope=scope)
+    return AdminBookingOut.of_admin(group, datetime.now(UTC))
+
+
+@router.post("/{booking_id}/resolve")
+async def resolve(
+    booking_id: int,
+    body: ResolveRequest,
+    staff: UserModel = Depends(cancel_any),
+    scope: VenueScope = Depends(get_venue_scope),
+    session: AsyncSession = Depends(get_session),
+) -> AdminBookingOut:
+    group = await booking_service.resolve(session, staff, booking_id, body.resolution, scope=scope)
     return AdminBookingOut.of_admin(group, datetime.now(UTC))

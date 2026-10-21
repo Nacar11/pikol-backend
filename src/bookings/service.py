@@ -313,6 +313,27 @@ class BookingService:
         await session.commit()
         return group
 
+    async def resolve(
+        self,
+        session: AsyncSession,
+        staff: UserModel,
+        booking_id: int,
+        resolution: str,
+        *,
+        scope: VenueScope,
+    ) -> BookingGroupModel:
+        """Take a booking out of the resolution queue (spec §5.5). The flag
+        clears; the record of what was done stays in the notes."""
+        group = await self.get_scoped(session, booking_id, scope=scope)
+        if not group.needs_resolution:
+            raise AppError(409, "NOT_FLAGGED", "This booking is not awaiting resolution.")
+        line = f"[resolved by user {staff.id}] {resolution}"
+        group.notes = f"{group.notes}\n{line}" if group.notes else line
+        group.needs_resolution = False
+        await session.commit()
+        await session.refresh(group)
+        return group
+
     # ── closures ─────────────────────────────────────────────────────────
 
     async def close_courts(
