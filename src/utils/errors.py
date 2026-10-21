@@ -28,6 +28,13 @@ class AppError(Exception):
         self.detail = detail
 
 
+def constraint_of(exc: IntegrityError) -> str | None:
+    """The violated constraint's name, as asyncpg reports it."""
+    cause = getattr(exc.orig, "__cause__", None)
+    name = getattr(cause, "constraint_name", None)
+    return name if isinstance(name, str) else None
+
+
 def _envelope(request: Request, status: int, detail: str, code: str | None = None) -> JSONResponse:
     request_id = getattr(request.state, "request_id", "")
     return JSONResponse(
@@ -54,9 +61,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         retry something that can never succeed, and hides a genuine fault
         from 5xx alerting.
         """
-        cause = getattr(exc.orig, "__cause__", None)
-        if getattr(cause, "constraint_name", None) == SLOT_CONSTRAINT:
-            return _envelope(request, 409, "That slot is no longer available.")
+        if constraint_of(exc) == SLOT_CONSTRAINT:
+            return _envelope(request, 409, "That slot is no longer available.", "SLOT_UNAVAILABLE")
 
         logger.exception("unhandled integrity error")
         return _envelope(request, 500, "Internal server error.")

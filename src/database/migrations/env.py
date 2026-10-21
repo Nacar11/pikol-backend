@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # same section — placed below them, `ruff check .` fails on I001, and CI runs
 # that gate.
 import src.auth.persistence.models  # noqa: F401
+import src.bookings.persistence.models  # noqa: F401
 import src.courts.persistence.models  # noqa: F401
 import src.parameters.persistence.models  # noqa: F401
 import src.pricing.persistence.models  # noqa: F401
