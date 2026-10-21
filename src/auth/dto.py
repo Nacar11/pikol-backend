@@ -51,3 +51,10 @@ class TokenPair(BaseModel):
     refresh_token: str
     token_type: Literal["bearer"] = "bearer"
     expires_in: int  # access token lifetime, seconds
+
+
+class PasswordResetRequest(BaseModel):
+    model_config = Forbid
+
+    token: str = Field(min_length=1, max_length=256)
+    new_password: str = Password

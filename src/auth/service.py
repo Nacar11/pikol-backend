@@ -234,5 +234,30 @@ class AuthService:
         await self.revoke_all(session, user.id)
         await session.commit()
 
+    async def forgot_password(
+        self, session: AsyncSession, email: str
+    ) -> tuple[UserModel, str] | None:
+        """A reset token, or None — the caller answers 202 either way.
+
+        Only for accounts that HAVE a password: an invitee has none, and
+        letting them set one here would bypass a revoked invitation.
+        """
+        user = await user_repository.get_by_email(session, email)
+        if user is None:
+            return None
+        await session.refresh(user, ["password_hash"])
+        if user.password_hash is None:
+            return None
+        token = await self.issue_token(session, user, TokenPurpose.PASSWORD_RESET, RESET_TTL)
+        await session.commit()
+        return user, token
+
+    async def reset_password(self, session: AsyncSession, raw: str, new_password: str) -> None:
+        user = await self.consume_token(session, raw, TokenPurpose.PASSWORD_RESET)
+        user.password_hash = hash_password(new_password)
+        # Whoever held the old password may hold a session too.
+        await self.revoke_all(session, user.id)
+        await session.commit()
+
 
 auth_service = AuthService()

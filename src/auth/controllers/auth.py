@@ -5,6 +5,7 @@ from src.auth.dependencies import get_current_user
 from src.auth.dto import (
     EmailRequest,
     LoginRequest,
+    PasswordResetRequest,
     RefreshRequest,
     RegisterRequest,
     TokenPair,
@@ -13,7 +14,7 @@ from src.auth.dto import (
 from src.auth.service import auth_service
 from src.database.session import get_session
 from src.email.port import EmailSender, get_email_sender, send_quietly
-from src.email.templates import verification_email
+from src.email.templates import password_reset_email, verification_email
 from src.users.dto import UserOut
 from src.users.persistence.models import UserModel
 from src.utils.api import API_PREFIX
@@ -68,3 +69,24 @@ async def logout(
     user: UserModel = Depends(get_current_user), session: AsyncSession = Depends(get_session)
 ) -> None:
     await auth_service.logout(session, user)
+
+
+@router.post("/password/forgot", status_code=status.HTTP_202_ACCEPTED)
+async def forgot_password(
+    body: EmailRequest,
+    session: AsyncSession = Depends(get_session),
+    sender: EmailSender = Depends(get_email_sender),
+) -> Response:
+    """Always 202, so it cannot be used to discover which emails exist."""
+    issued = await auth_service.forgot_password(session, body.email)
+    if issued is not None:
+        user, token = issued
+        await send_quietly(sender, password_reset_email(user.email, user.first_name, token))
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post("/password/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(
+    body: PasswordResetRequest, session: AsyncSession = Depends(get_session)
+) -> None:
+    await auth_service.reset_password(session, body.token, body.new_password)

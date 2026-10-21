@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.users.domain.roles import RoleCode
 from src.users.persistence.models import UserModel
@@ -30,3 +30,21 @@ class UserOut(BaseModel):
             is_active=user.is_active,
             email_verified_at=user.email_verified_at,
         )
+
+
+class ProfileUpdate(BaseModel):
+    """What a user may change about themselves. Email, role, and venue are
+    absent — and extra="forbid" makes sending them a 422, not a no-op."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    mobile: str | None = Field(default=None, max_length=32)
+
+
+class PasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
