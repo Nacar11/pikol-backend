@@ -58,7 +58,7 @@ objects with no SQLAlchemy imports. CRUD features (`venues`, `courts`,
 rules (prices, windows, caps — in Postgres, tunable without a deploy). Do not
 conflate them.
 
-## What exists now (Phase 3 complete)
+## What exists now (Phase 4 complete)
 
 | Module | Provides |
 |---|---|
@@ -86,9 +86,32 @@ conflate them.
 | `src/pricing/domain/pricing.py` | `PriceRule`, `PriceResolver(rules, default).price_at(starts_at)`, `convenience_fee_centavos` — pure |
 | `src/pricing/service.py` | `pricing_service.resolver_for(session, court_id, scope=)` — one query, then in-memory |
 
-Phase 4 (booking core) builds availability on `PriceResolver` — one
-resolver per court, never a query per cell — and freezes prices on the
-booking rows.
+| `src/bookings/domain/` | enums, `BookingError(code, detail, kind)`, `BookingSnapshot`, every transition guard, `display_status`, `new_reference_code` — pure |
+| `src/bookings/persistence/repository.py` | `booking_repository` — `insert`, **`set_status` (the only status writer)**, `expire_lapsed`, `count_live_holds`, `occupancy`, scoped and per-player reads |
+| `src/bookings/service.py` | `booking_service` — holds, availability, player cancel, walk-ins, staff cancel, mark-paid, outcome, closures |
+| `src/bookings/http_errors.py` | maps `BookingError.kind` → 422 (`invalid`) / 409 (`conflict`) |
+
+Phase 5 (payments) adds the provider port, `MockProvider`, `MayaProvider`,
+checkout on `POST /bookings`, the webhook calling
+`can_confirm_online_payment` → `set_status(CONFIRMED)`, late-payment
+re-acquisition, and the unfulfilled queue. Read ADR 0002 first.
+
+## Booking rules in practice
+
+- **Only `BookingRepository` writes `booking_status`** — `set_status` moves a
+  group and all its slots together and clears `expires_at` when leaving
+  `PENDING` (`ck_pending_has_expiry`). Assigning `group.booking_status`
+  anywhere else corrupts availability.
+- **Every `PENDING` read adds `expires_at > now`** — `count_live_holds`,
+  `occupancy`, and `BookingSnapshot.is_live_hold`. Both repository filters
+  are mutation-checked by tests; keep it that way when adding a read.
+- **The index decides collisions.** Never pre-check a slot with a SELECT;
+  `insert` turns `uq_court_slot_active` into 409 `SLOT_UNAVAILABLE`.
+- **Writes act on rows already fetched through a scoped read**, which is why
+  `insert`/`set_status`/`expire_lapsed` take no `scope`. Reads take one.
+- Guards take `now` as a parameter; services pass `datetime.now(UTC)`.
+- Known limit: two simultaneous hold requests from one player can exceed
+  `max_active_holds_per_player` by one. Accepted — it is a soft cap.
 
 ## Venue scope in practice
 
@@ -125,6 +148,9 @@ booking rows.
 - **`outbox`** is a `MemoryEmailSender` wired into `client`; read emailed
   links back from `outbox.outbox[-1].body`.
 - **`tests/auth/helpers.py`** — `make_user`, `make_venue`, `login`, `bearer`.
+- `tests/bookings/conftest.py` — a two-venue `world`, `hold(...)`,
+  `set_parameter(...)`; `tests/bookings/helpers.py` — `next_hour`,
+  `insert_booking`. The parameter cache is invalidated before every test.
 - The rate limiter is reset before every test; its buckets are in-process
   and every test client shares one IP.
 - **`db_session`** wraps each test in a transaction that is always rolled
