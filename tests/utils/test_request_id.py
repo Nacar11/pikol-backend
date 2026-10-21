@@ -31,6 +31,7 @@ async def test_docs_are_hidden_when_not_debugging() -> None:
     production = Settings(
         _env_file=None,
         database_url="postgresql+asyncpg://u:p@localhost:5432/pikol",
+        jwt_secret="x" * 32,
         debug=False,
     )
     transport = ASGITransport(app=create_app(production))

@@ -12,19 +12,36 @@ SLOT_CONSTRAINT = "uq_court_slot_active"
 
 class ErrorResponse(BaseModel):
     detail: str
+    # Machine-readable, for the frontend to branch on — e.g. EMAIL_NOT_VERIFIED
+    # renders a resend action (spec §6.6). `detail` is for humans and may change.
+    code: str | None = None
     request_id: str
 
 
-def _envelope(request: Request, status: int, detail: str) -> JSONResponse:
+class AppError(Exception):
+    """An expected failure with a stable code, rendered through the envelope."""
+
+    def __init__(self, status: int, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.code = code
+        self.detail = detail
+
+
+def _envelope(request: Request, status: int, detail: str, code: str | None = None) -> JSONResponse:
     request_id = getattr(request.state, "request_id", "")
     return JSONResponse(
         status_code=status,
-        content=ErrorResponse(detail=detail, request_id=request_id).model_dump(),
+        content=ErrorResponse(detail=detail, code=code, request_id=request_id).model_dump(),
         headers={"X-Request-ID": request_id},
     )
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(AppError)
+    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
+        return _envelope(request, exc.status, exc.detail, exc.code)
+
     @app.exception_handler(IntegrityError)
     async def handle_integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:
         """ONLY the slot-uniqueness violation is a 409.
