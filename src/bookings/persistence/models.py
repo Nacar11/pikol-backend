@@ -16,9 +16,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-import src.courts.persistence.models  # noqa: F401  (court_id FK target)
 import src.users.persistence.models  # noqa: F401  (player / audit FK target)
 from src.bookings.domain.enums import BookingStatus, BookingType, PaymentMethod, PaymentStatus
+from src.courts.persistence.models import CourtModel
 from src.database.base import Base
 
 SLOT_CONSTRAINT = "uq_court_slot_active"
@@ -91,6 +91,7 @@ class BookingGroupModel(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    court: Mapped[CourtModel] = relationship(lazy="joined")
     slots: Mapped[list["BookingSlotModel"]] = relationship(
         order_by="BookingSlotModel.starts_at", lazy="selectin", cascade="all, delete-orphan"
     )

@@ -4,6 +4,9 @@ from slowapi.errors import RateLimitExceeded
 
 from src.auth.controllers.auth import router as auth_router
 from src.auth.rate_limit import handle_rate_limited, limiter
+from src.bookings.controllers.availability import router as availability_router
+from src.bookings.controllers.player import router as bookings_router
+from src.bookings.http_errors import register_booking_errors
 from src.config.settings import Settings, get_settings
 from src.courts.controllers.admin import router as admin_courts_router
 from src.health.controllers.health import router as health_router
@@ -49,6 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     register_exception_handlers(app)
+    register_booking_errors(app)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, handle_rate_limited)
     app.include_router(health_router)
@@ -59,6 +63,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_venues_router)
     app.include_router(admin_courts_router)
     app.include_router(admin_pricing_router)
+    app.include_router(availability_router)
+    app.include_router(bookings_router)
     return app
 
 

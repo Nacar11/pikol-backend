@@ -62,3 +62,11 @@ async def require_super_admin(user: UserModel = Depends(get_current_user)) -> Us
     if not user.system_admin:
         raise forbidden()
     return user
+
+
+async def require_player(user: UserModel = Depends(get_current_user)) -> UserModel:
+    """Online holds are for players. Staff book walk-ins through their own
+    route, which carries their own guards (spec §5.2)."""
+    if user.role.code != "PLAYER":
+        raise forbidden()
+    return user

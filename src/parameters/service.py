@@ -34,5 +34,10 @@ class ParameterService:
         self._loaded_at = now
         return self._cached
 
+    def invalidate(self) -> None:
+        """Drop the cached values; the next get() reads the table. Called
+        after an admin write, and by the test suite between tests."""
+        self._cached = None
+
 
 parameter_service = ParameterService()

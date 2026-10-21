@@ -2,11 +2,12 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, func, not_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.bookings.domain.enums import BookingStatus
+from src.auth.scope import VenueScope
+from src.bookings.domain.enums import RELEASING, BookingStatus, BookingType
 from src.bookings.domain.rules import new_reference_code
 from src.bookings.persistence.models import (
     REFERENCE_CONSTRAINT,
@@ -14,6 +15,7 @@ from src.bookings.persistence.models import (
     BookingGroupModel,
     BookingSlotModel,
 )
+from src.courts.persistence.models import CourtModel
 from src.utils.errors import AppError, constraint_of
 
 REFERENCE_ATTEMPTS = 5
@@ -154,6 +156,57 @@ class BookingRepository:
                 .values(booking_status=BookingStatus.EXPIRED)
             )
         return list(expired)
+
+    # ── reads ────────────────────────────────────────────────────────────
+
+    async def count_live_holds(self, session: AsyncSession, player_id: int, now: datetime) -> int:
+        """Unexpired holds only. Counting PENDING alone would include holds
+        that lapsed weeks ago, and a player who abandoned checkout three
+        times would be locked out forever (spec §4.3)."""
+        return (
+            await session.execute(
+                select(func.count()).where(
+                    BookingGroupModel.player_id == player_id,
+                    BookingGroupModel.booking_status == BookingStatus.PENDING,
+                    BookingGroupModel.expires_at > now,
+                )
+            )
+        ).scalar_one()
+
+    async def occupancy(
+        self,
+        session: AsyncSession,
+        court_ids: Sequence[int],
+        start: datetime,
+        end: datetime,
+        now: datetime,
+        *,
+        scope: VenueScope,
+    ) -> dict[tuple[int, datetime], BookingType]:
+        """Which (court, hour) pairs are taken in [start, end), and by what.
+
+        Applies the hold-expiry filter: a lapsed PENDING row still exists
+        (cleanup is lazy) but must not block the grid.
+        """
+        rows = await session.execute(
+            select(BookingSlotModel.court_id, BookingSlotModel.starts_at, BookingGroupModel.type)
+            .join(BookingGroupModel, BookingGroupModel.id == BookingSlotModel.booking_group_id)
+            .join(CourtModel, CourtModel.id == BookingSlotModel.court_id)
+            .where(
+                BookingSlotModel.court_id.in_(court_ids),
+                BookingSlotModel.starts_at >= start,
+                BookingSlotModel.starts_at < end,
+                BookingSlotModel.booking_status.not_in(RELEASING),
+                not_(
+                    and_(
+                        BookingGroupModel.booking_status == BookingStatus.PENDING,
+                        BookingGroupModel.expires_at <= now,
+                    )
+                ),
+                scope.where(CourtModel.venue_id),
+            )
+        )
+        return {(court_id, starts_at): type_ for court_id, starts_at, type_ in rows}
 
 
 booking_repository = BookingRepository()

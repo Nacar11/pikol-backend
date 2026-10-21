@@ -31,6 +31,17 @@ class PricingService:
             (PriceRule(r.day_of_week, r.hour_of_day, r.price_centavos) for r in rules), default
         )
 
+    async def resolvers_for(
+        self, session: AsyncSession, court_ids: list[int], *, scope: VenueScope
+    ) -> dict[int, PriceResolver]:
+        """One resolver per court from a single rules query."""
+        rules = await price_rule_repository.list_for_courts(session, court_ids, scope=scope)
+        default = (await parameter_service.get(session)).default_slot_price_centavos
+        by_court: dict[int, list[PriceRule]] = {court_id: [] for court_id in court_ids}
+        for r in rules:
+            by_court[r.court_id].append(PriceRule(r.day_of_week, r.hour_of_day, r.price_centavos))
+        return {court_id: PriceResolver(rs, default) for court_id, rs in by_court.items()}
+
     async def list_rules(
         self, session: AsyncSession, court_id: int, *, scope: VenueScope
     ) -> list[PriceRuleModel]:

@@ -44,10 +44,14 @@ def _envelope(request: Request, status: int, detail: str, code: str | None = Non
     )
 
 
+def render(request: Request, exc: AppError) -> JSONResponse:
+    return _envelope(request, exc.status, exc.detail, exc.code)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-        return _envelope(request, exc.status, exc.detail, exc.code)
+        return render(request, exc)
 
     @app.exception_handler(IntegrityError)
     async def handle_integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:

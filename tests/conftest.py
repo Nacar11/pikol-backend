@@ -9,6 +9,7 @@ from src.database.session import engine, get_session
 from src.email.adapters import MemoryEmailSender
 from src.email.port import get_email_sender
 from src.main import create_app
+from src.parameters.service import parameter_service
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +33,14 @@ def _reset_rate_limits() -> None:
     shares one IP, so without this the 11th login of the SESSION — not of
     the test — would be refused."""
     limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_parameter_cache() -> None:
+    """The cache outlives a test's rolled-back transaction — a test that
+    changes a parameter would otherwise leak it into the next 30 seconds of
+    the suite."""
+    parameter_service.invalidate()
 
 
 @pytest.fixture

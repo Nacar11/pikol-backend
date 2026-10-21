@@ -44,5 +44,17 @@ class PriceRuleRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_for_courts(
+        self, session: AsyncSession, court_ids: list[int], *, scope: VenueScope
+    ) -> list[PriceRuleModel]:
+        """Every rule of a set of courts in ONE query — the availability grid
+        resolves all its cells against this (spec §7.2)."""
+        rows = await session.execute(
+            select(PriceRuleModel)
+            .join(CourtModel, CourtModel.id == PriceRuleModel.court_id)
+            .where(PriceRuleModel.court_id.in_(court_ids), scope.where(CourtModel.venue_id))
+        )
+        return list(rows.scalars().all())
+
 
 price_rule_repository = PriceRuleRepository()
