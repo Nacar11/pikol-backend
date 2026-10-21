@@ -133,6 +133,16 @@ def can_set_outcome(b: BookingSnapshot, now: datetime) -> None:
         raise _conflict("NOT_STARTED", "This booking has not started yet.")
 
 
+def can_start_checkout(b: BookingSnapshot, now: datetime) -> None:
+    """A checkout is only worth opening for a live, unpaid player hold."""
+    if (
+        b.type != BookingType.PLAYER_BOOKING
+        or not b.is_live_hold(now)
+        or b.payment_status == PaymentStatus.PAID
+    ):
+        raise _conflict("HOLD_NOT_LIVE", "There is no live hold to pay for.")
+
+
 def can_confirm_online_payment(b: BookingSnapshot, now: datetime) -> None:
     """PENDING → CONFIRMED, the webhook's transition (wired in Phase 5). A
     payment for a lapsed hold goes to re-acquisition instead (spec §5.5)."""

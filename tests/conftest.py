@@ -10,6 +10,8 @@ from src.email.adapters import MemoryEmailSender
 from src.email.port import get_email_sender
 from src.main import create_app
 from src.parameters.service import parameter_service
+from src.payments.adapters.mock import MockProvider
+from src.payments.provider import get_payment_provider
 
 
 @pytest.fixture(autouse=True)
@@ -66,8 +68,14 @@ def outbox() -> MemoryEmailSender:
 
 
 @pytest.fixture
+def provider() -> MockProvider:
+    """A fresh mock Maya per test — monkeypatch it to simulate outages."""
+    return MockProvider(api_base_url="http://test")
+
+
+@pytest.fixture
 async def client(
-    db_session: AsyncSession, outbox: MemoryEmailSender
+    db_session: AsyncSession, outbox: MemoryEmailSender, provider: MockProvider
 ) -> AsyncGenerator[AsyncClient, None]:
     """The app, with its session dependency pointed at the rolling-back one.
 
@@ -79,6 +87,7 @@ async def client(
     app = create_app()
     app.dependency_overrides[get_session] = lambda: db_session
     app.dependency_overrides[get_email_sender] = lambda: outbox
+    app.dependency_overrides[get_payment_provider] = lambda: provider
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

@@ -176,3 +176,14 @@ class AdminBookingOut(BookingOut):
             ),
             created_by_user_id=group.created_by_user_id,
         )
+
+
+class CheckoutBookingOut(BookingOut):
+    """A hold plus where to pay for it. The redirect back NEVER confirms the
+    booking — the webhook does (spec §5.3)."""
+
+    checkout_url: str
+
+    @classmethod
+    def with_url(cls, group: BookingGroupModel, now: datetime, url: str) -> "CheckoutBookingOut":
+        return cls(**BookingOut.of(group, now).model_dump(), checkout_url=url)

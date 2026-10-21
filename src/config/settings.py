@@ -36,13 +36,28 @@ class Settings(BaseSettings):
     email_provider: Literal["console", "memory"] = "console"
     rate_limit_enabled: bool = True
 
-    @field_validator("frontend_base_url")
+    # Payments (ADR 0002). Only the mock exists until the Maya adapter lands,
+    # so config cannot select an adapter that is not there.
+    payment_provider: Literal["mock"] = "mock"
+    # Where this API is reachable — the mock's checkout URLs point here.
+    api_base_url: str = "http://localhost:8000"
+    # Mounts the mock's hosted page and "simulate payment" routes. Off by
+    # default: without them nobody can mark a mock payment paid, so a deploy
+    # accidentally left on the mock cannot give courts away.
+    mock_checkout_enabled: bool = False
+    # Maya's published webhook source IPs (ADR 0002). Empty = no allowlist.
+    # Defence in depth only — the re-fetch is the real control.
+    maya_webhook_allowed_ips: list[str] = []
+    # Proxies in front of the app that append to X-Forwarded-For (Render: 1).
+    trusted_proxy_hops: int = Field(default=0, ge=0)
+
+    @field_validator("frontend_base_url", "api_base_url")
     @classmethod
     def reject_base_url_trailing_slash(cls, url: str) -> str:
         if url.endswith("/"):
             raise ValueError(
-                f"FRONTEND_BASE_URL {url!r} has a trailing slash; email links "
-                f"would come out as //verify-email"
+                f"base URL {url!r} has a trailing slash; links built from it "
+                f"would come out with a double slash"
             )
         return url
 

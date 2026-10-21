@@ -187,3 +187,17 @@ def test_reference_code_shape() -> None:
     codes = {new_reference_code() for _ in range(200)}
     assert all(re.fullmatch(r"PKL-[A-HJ-KMNP-TV-Z2-9]{5}", c) for c in codes)
     assert len(codes) > 190
+
+
+def test_checkout_needs_a_live_unpaid_hold() -> None:
+    from src.bookings.domain.rules import can_start_checkout
+
+    can_start_checkout(held(NOW + timedelta(minutes=1)), NOW)
+    for denied in (
+        held(NOW),  # lapsed
+        snap(),  # confirmed and paid
+        walk_in(),
+    ):
+        with pytest.raises(BookingError) as exc:
+            can_start_checkout(denied, NOW)
+        assert exc.value.code == "HOLD_NOT_LIVE"

@@ -12,6 +12,7 @@ from src.bookings.domain.rules import (
     can_cancel_closure,
     can_mark_paid,
     can_set_outcome,
+    can_start_checkout,
     check_on_the_hour,
     check_player_window,
     check_walk_in_window,
@@ -185,6 +186,14 @@ class BookingService:
         group = await booking_repository.get_for_player(session, booking_id, player.id)
         if group is None:
             raise booking_not_found()  # someone else's booking looks exactly like none
+        return group
+
+    async def checkout_target(
+        self, session: AsyncSession, player: UserModel, booking_id: int
+    ) -> BookingGroupModel:
+        """The player's own live, unpaid hold — for a retry checkout."""
+        group = await self.get_for_player(session, player, booking_id)
+        can_start_checkout(snapshot(group), datetime.now(UTC))
         return group
 
     async def cancel_by_player(

@@ -4,10 +4,13 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.dependencies import require_player
-from src.bookings.dto import BookingOut, HoldRequest, PlayerCancelRequest
+from src.bookings.dto import BookingOut, CheckoutBookingOut, HoldRequest, PlayerCancelRequest
 from src.bookings.persistence.repository import booking_repository
 from src.bookings.service import booking_service
 from src.database.session import get_session
+from src.payments.domain.port import PaymentProvider
+from src.payments.provider import get_payment_provider
+from src.payments.service import payment_service
 from src.users.persistence.models import UserModel
 from src.utils.api import API_PREFIX
 from src.utils.pagination import Page
@@ -20,11 +23,16 @@ async def create_hold(
     body: HoldRequest,
     player: UserModel = Depends(require_player),
     session: AsyncSession = Depends(get_session),
-) -> BookingOut:
-    """Hold consecutive hours for hold_duration_minutes. Prices and fee are
-    frozen now. Payment arrives in Phase 5; until then the hold expires."""
+    provider: PaymentProvider = Depends(get_payment_provider),
+) -> CheckoutBookingOut:
+    """Hold consecutive hours for hold_duration_minutes, then open a
+    checkout. Prices and fee are frozen now. The hold commits BEFORE the
+    provider is called."""
     group = await booking_service.create_hold(session, player, body)
-    return BookingOut.of(group, datetime.now(UTC))
+    url = await payment_service.start_checkout(session, group, provider)
+    return CheckoutBookingOut(
+        **BookingOut.of(group, datetime.now(UTC)).model_dump(), checkout_url=url
+    )
 
 
 # Identity from the token, never the URL: /bookings/me, not /bookings/{player}.
@@ -64,3 +72,19 @@ async def cancel_my_booking(
 ) -> BookingOut:
     group = await booking_service.cancel_by_player(session, player, booking_id, body.reason)
     return BookingOut.of(group, datetime.now(UTC))
+
+
+@router.post("/me/{booking_id}/checkout")
+async def retry_checkout(
+    booking_id: int,
+    player: UserModel = Depends(require_player),
+    session: AsyncSession = Depends(get_session),
+    provider: PaymentProvider = Depends(get_payment_provider),
+) -> CheckoutBookingOut:
+    """A fresh checkout for a live hold — after a failed payment, a provider
+    outage, or a closed tab. Each attempt is its own payments row."""
+    group = await booking_service.checkout_target(session, player, booking_id)
+    url = await payment_service.start_checkout(session, group, provider)
+    return CheckoutBookingOut(
+        **BookingOut.of(group, datetime.now(UTC)).model_dump(), checkout_url=url
+    )
