@@ -5,6 +5,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.session import engine, get_session
+from src.email.adapters import MemoryEmailSender
+from src.email.port import get_email_sender
 from src.main import create_app
 
 
@@ -40,7 +42,15 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+def outbox() -> MemoryEmailSender:
+    """Every email the app sends during one test."""
+    return MemoryEmailSender()
+
+
+@pytest.fixture
+async def client(
+    db_session: AsyncSession, outbox: MemoryEmailSender
+) -> AsyncGenerator[AsyncClient, None]:
     """The app, with its session dependency pointed at the rolling-back one.
 
     Without this override the app opens its OWN session on the real engine
@@ -50,6 +60,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """
     app = create_app()
     app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_email_sender] = lambda: outbox
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
