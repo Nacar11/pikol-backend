@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, not_, select, update
+from sqlalchemy import ColumnElement, and_, exists, func, not_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -231,6 +231,75 @@ class BookingRepository:
             select(BookingGroupModel).where(
                 BookingGroupModel.id == booking_id, BookingGroupModel.player_id == player_id
             )
+        )
+        return result.unique().scalar_one_or_none()
+
+    # Staff reads: venue-owned, so `scope` is keyword-only with no default,
+    # applied to the booking's own court's venue.
+
+    @staticmethod
+    def _first_slot() -> ColumnElement[datetime]:
+        return (
+            select(func.min(BookingSlotModel.starts_at))
+            .where(BookingSlotModel.booking_group_id == BookingGroupModel.id)
+            .correlate(BookingGroupModel)
+            .scalar_subquery()
+        )
+
+    async def list_scoped(
+        self,
+        session: AsyncSession,
+        *,
+        scope: VenueScope,
+        page: int,
+        limit: int,
+        venue_id: int | None = None,
+        court_id: int | None = None,
+        between: tuple[datetime, datetime] | None = None,
+        booking_status: BookingStatus | None = None,
+        type: BookingType | None = None,
+    ) -> tuple[list[BookingGroupModel], int]:
+        filters: list[Any] = [scope.where(CourtModel.venue_id)]
+        if venue_id is not None:
+            filters.append(CourtModel.venue_id == venue_id)
+        if court_id is not None:
+            filters.append(BookingGroupModel.court_id == court_id)
+        if booking_status is not None:
+            filters.append(BookingGroupModel.booking_status == booking_status)
+        if type is not None:
+            filters.append(BookingGroupModel.type == type)
+        if between is not None:
+            # Any slot on that (Manila) day — a session crossing midnight
+            # appears on both days.
+            start, end = between
+            filters.append(
+                exists().where(
+                    BookingSlotModel.booking_group_id == BookingGroupModel.id,
+                    BookingSlotModel.starts_at >= start,
+                    BookingSlotModel.starts_at < end,
+                )
+            )
+        base = select(BookingGroupModel).join(
+            CourtModel, CourtModel.id == BookingGroupModel.court_id
+        )
+        total = (
+            await session.execute(select(func.count()).select_from(base.where(*filters).subquery()))
+        ).scalar_one()
+        rows = await session.execute(
+            base.where(*filters)
+            .order_by(self._first_slot(), BookingGroupModel.id)
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+        return list(rows.unique().scalars().all()), total
+
+    async def get_scoped(
+        self, session: AsyncSession, booking_id: int, *, scope: VenueScope
+    ) -> BookingGroupModel | None:
+        result = await session.execute(
+            select(BookingGroupModel)
+            .join(CourtModel, CourtModel.id == BookingGroupModel.court_id)
+            .where(BookingGroupModel.id == booking_id, scope.where(CourtModel.venue_id))
         )
         return result.unique().scalar_one_or_none()
 

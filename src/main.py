@@ -4,6 +4,7 @@ from slowapi.errors import RateLimitExceeded
 
 from src.auth.controllers.auth import router as auth_router
 from src.auth.rate_limit import handle_rate_limited, limiter
+from src.bookings.controllers.admin import router as admin_bookings_router
 from src.bookings.controllers.availability import router as availability_router
 from src.bookings.controllers.player import router as bookings_router
 from src.bookings.http_errors import register_booking_errors
@@ -65,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_pricing_router)
     app.include_router(availability_router)
     app.include_router(bookings_router)
+    app.include_router(admin_bookings_router)
     return app
 
 

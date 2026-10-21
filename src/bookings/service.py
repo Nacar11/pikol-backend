@@ -3,14 +3,25 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.scope import VenueScope
-from src.bookings.domain.enums import BookingStatus, BookingType, PaymentStatus
+from src.bookings.domain.enums import BookingStatus, BookingType, PaymentMethod, PaymentStatus
 from src.bookings.domain.rules import (
     can_cancel_by_player,
+    can_cancel_by_staff,
+    can_mark_paid,
+    can_set_outcome,
     check_on_the_hour,
     check_player_window,
+    check_walk_in_window,
     slot_starts,
 )
-from src.bookings.dto import Availability, GridCourt, GridSlot, GridStatus, HoldRequest
+from src.bookings.dto import (
+    Availability,
+    GridCourt,
+    GridSlot,
+    GridStatus,
+    HoldRequest,
+    WalkInRequest,
+)
 from src.bookings.persistence.models import BookingGroupModel
 from src.bookings.persistence.repository import booking_repository
 from src.bookings.service_support import snapshot
@@ -78,12 +89,7 @@ class BookingService:
                 f"Pay for or cancel one first.",
             )
 
-        starts = slot_starts(body.starts_at, body.hours)
-        resolver = (await pricing_service.resolvers_for(session, [court.id], scope=CATALOG))[
-            court.id
-        ]
-        slot_prices = [(s, resolver.price_at(s)) for s in starts]
-        price = sum(p for _, p in slot_prices)
+        starts, slot_prices, price = await self._priced_slots(session, court.id, body)
         fee = convenience_fee_centavos(price, params.convenience_fee_percent)
 
         await booking_repository.expire_lapsed(session, court.id, starts, now)
@@ -105,6 +111,17 @@ class BookingService:
         )
         await session.commit()
         return group
+
+    async def _priced_slots(
+        self, session: AsyncSession, court_id: int, body: HoldRequest
+    ) -> tuple[list[datetime], list[tuple[datetime, int]], int]:
+        """Each hour's price from the court's rules, frozen into the booking."""
+        starts = slot_starts(body.starts_at, body.hours)
+        resolver = (await pricing_service.resolvers_for(session, [court_id], scope=CATALOG))[
+            court_id
+        ]
+        slot_prices = [(s, resolver.price_at(s)) for s in starts]
+        return starts, slot_prices, sum(p for _, p in slot_prices)
 
     async def availability(self, session: AsyncSession, venue_id: int, day: date) -> Availability:
         """The whole day grid for a venue (spec §7.2): one occupancy query,
@@ -183,6 +200,101 @@ class BookingService:
             cancelled_by_user_id=player.id,
             cancellation_reason=reason or PLAYER_CANCEL_REASON,
         )
+        await session.commit()
+        return group
+
+    # ── staff ────────────────────────────────────────────────────────────
+
+    async def get_scoped(
+        self, session: AsyncSession, booking_id: int, *, scope: VenueScope
+    ) -> BookingGroupModel:
+        group = await booking_repository.get_scoped(session, booking_id, scope=scope)
+        if group is None:
+            raise booking_not_found()  # out of scope looks exactly like missing
+        return group
+
+    async def create_walk_in(
+        self, session: AsyncSession, staff: UserModel, body: WalkInRequest, *, scope: VenueScope
+    ) -> BookingGroupModel:
+        """CONFIRMED/UNPAID immediately — it blocks the slot before money
+        changes hands, which is why there are two status axes (spec §5.1)."""
+        now = datetime.now(UTC)
+        params = await parameter_service.get(session)
+        court = await self.bookable_court(session, body.court_id, scope=scope)
+        check_on_the_hour(body.starts_at)
+        check_walk_in_window(body.starts_at, now, backdate_days=params.staff_backdate_days)
+        starts, slot_prices, price = await self._priced_slots(session, court.id, body)
+
+        await booking_repository.expire_lapsed(session, court.id, starts, now)
+        group = await booking_repository.insert(
+            session,
+            fields={
+                "court_id": court.id,
+                "player_id": None,
+                "type": BookingType.WALK_IN,
+                "booking_status": BookingStatus.CONFIRMED,
+                "payment_status": PaymentStatus.UNPAID,
+                "price_centavos": price,
+                "fee_centavos": 0,  # walk-ins pay no convenience fee
+                "total_centavos": price,
+                "notes": body.notes,
+                "created_by_user_id": staff.id,
+            },
+            slot_prices=slot_prices,
+        )
+        await session.commit()
+        return group
+
+    async def cancel_by_staff(
+        self,
+        session: AsyncSession,
+        staff: UserModel,
+        booking_id: int,
+        reason: str,
+        *,
+        scope: VenueScope,
+    ) -> BookingGroupModel:
+        group = await self.get_scoped(session, booking_id, scope=scope)
+        can_cancel_by_staff(snapshot(group))
+        await booking_repository.set_status(
+            session,
+            group,
+            BookingStatus.CANCELLED,
+            cancelled_at=datetime.now(UTC),
+            cancelled_by_user_id=staff.id,
+            cancellation_reason=reason,
+        )
+        await session.commit()
+        return group
+
+    async def mark_paid(
+        self,
+        session: AsyncSession,
+        booking_id: int,
+        method: PaymentMethod,
+        *,
+        scope: VenueScope,
+    ) -> BookingGroupModel:
+        group = await self.get_scoped(session, booking_id, scope=scope)
+        can_mark_paid(snapshot(group))
+        # payment_status, not booking_status — so not a set_status call.
+        group.payment_status = PaymentStatus.PAID
+        group.payment_method = method
+        await session.commit()
+        await session.refresh(group)
+        return group
+
+    async def set_outcome(
+        self,
+        session: AsyncSession,
+        booking_id: int,
+        outcome: BookingStatus,
+        *,
+        scope: VenueScope,
+    ) -> BookingGroupModel:
+        group = await self.get_scoped(session, booking_id, scope=scope)
+        can_set_outcome(snapshot(group), datetime.now(UTC))
+        await booking_repository.set_status(session, group, outcome)
         await session.commit()
         return group
 

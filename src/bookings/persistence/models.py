@@ -16,10 +16,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-import src.users.persistence.models  # noqa: F401  (player / audit FK target)
 from src.bookings.domain.enums import BookingStatus, BookingType, PaymentMethod, PaymentStatus
 from src.courts.persistence.models import CourtModel
 from src.database.base import Base
+from src.users.persistence.models import UserModel
 
 SLOT_CONSTRAINT = "uq_court_slot_active"
 REFERENCE_CONSTRAINT = "booking_groups_reference_code_key"
@@ -92,6 +92,7 @@ class BookingGroupModel(Base):
     )
 
     court: Mapped[CourtModel] = relationship(lazy="joined")
+    player: Mapped[UserModel | None] = relationship(foreign_keys=[player_id], lazy="joined")
     slots: Mapped[list["BookingSlotModel"]] = relationship(
         order_by="BookingSlotModel.starts_at", lazy="selectin", cascade="all, delete-orphan"
     )

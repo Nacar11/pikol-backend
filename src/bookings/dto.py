@@ -21,6 +21,34 @@ class HoldRequest(BaseModel):
     hours: int = Field(default=1, ge=1, le=MAX_HOURS)
 
 
+class WalkInRequest(HoldRequest):
+    """Staff at the counter. May backdate up to staff_backdate_days."""
+
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class StaffCancelRequest(BaseModel):
+    """The reason is REQUIRED: no refunds, so it is the whole audit trail of
+    a disputed cancellation (spec §6.5)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class MarkPaidRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # ONLINE is absent on purpose: online money arrives only via the provider.
+    payment_method: Literal[PaymentMethod.CASH, PaymentMethod.MANUAL_GCASH]
+
+
+class OutcomeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal[BookingStatus.COMPLETED, BookingStatus.NO_SHOW]
+
+
 class PlayerCancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -106,3 +134,30 @@ class Availability(BaseModel):
     venue_id: int
     date: date
     courts: list[GridCourt]
+
+
+class PlayerSummary(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: str
+
+
+class AdminBookingOut(BookingOut):
+    """Staff see who booked; players never do (spec §7.2)."""
+
+    player: PlayerSummary | None
+    created_by_user_id: int
+
+    @classmethod
+    def of_admin(cls, group: BookingGroupModel, now: datetime) -> "AdminBookingOut":
+        p = group.player
+        return cls(
+            **BookingOut.of(group, now).model_dump(),
+            player=None
+            if p is None
+            else PlayerSummary(
+                id=p.id, first_name=p.first_name, last_name=p.last_name, email=p.email
+            ),
+            created_by_user_id=group.created_by_user_id,
+        )
