@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
@@ -80,12 +81,12 @@ def manila_date(at: datetime) -> date:
 
 async def hold(
     client: AsyncClient, headers: dict[str, str], court_id: int, starts_at: datetime, hours: int = 1
-) -> dict[str, object]:
+) -> dict[str, Any]:
     response = await client.post(
         BOOKINGS,
         headers=headers,
         json={"court_id": court_id, "starts_at": starts_at.isoformat(), "hours": hours},
     )
     assert response.status_code == 201, response.text
-    body: dict[str, object] = response.json()
+    body: dict[str, Any] = response.json()
     return body

@@ -49,6 +49,21 @@ class OutcomeRequest(BaseModel):
     outcome: Literal[BookingStatus.COMPLETED, BookingStatus.NO_SHOW]
 
 
+MAX_CLOSURE = 31  # days per request — 744 slot rows per court
+
+
+class ClosureRequest(BaseModel):
+    """Close courts for a range. One MAINTENANCE group per court, N slot
+    rows each — the same rows that block bookings (ADR 0001)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    court_ids: list[int] = Field(min_length=1, max_length=50)
+    starts_at: AwareDatetime
+    ends_at: AwareDatetime  # exclusive, on the hour
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class PlayerCancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

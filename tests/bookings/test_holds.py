@@ -40,7 +40,7 @@ async def test_hold_freezes_prices_and_fee(
 
     body = await hold(client, world.player, world.a.court.id, start, hours=2)
 
-    assert [s["price_centavos"] for s in body["slots"]] == [70000, 90000]  # type: ignore[index]
+    assert [s["price_centavos"] for s in body["slots"]] == [70000, 90000]
     assert body["price_centavos"] == 160000
     assert body["fee_centavos"] == 4800  # 3.00%
     assert body["total_centavos"] == 164800

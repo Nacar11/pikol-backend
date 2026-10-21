@@ -4,9 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.scope import VenueScope
 from src.bookings.domain.enums import BookingStatus, BookingType, PaymentMethod, PaymentStatus
+from src.bookings.domain.errors import BookingError
 from src.bookings.domain.rules import (
+    SLOT,
     can_cancel_by_player,
     can_cancel_by_staff,
+    can_cancel_closure,
     can_mark_paid,
     can_set_outcome,
     check_on_the_hour,
@@ -15,7 +18,9 @@ from src.bookings.domain.rules import (
     slot_starts,
 )
 from src.bookings.dto import (
+    MAX_CLOSURE,
     Availability,
+    ClosureRequest,
     GridCourt,
     GridSlot,
     GridStatus,
@@ -27,6 +32,7 @@ from src.bookings.persistence.repository import booking_repository
 from src.bookings.service_support import snapshot
 from src.courts.persistence.models import CourtModel
 from src.courts.persistence.repository import court_repository
+from src.courts.service import court_service
 from src.parameters.service import parameter_service
 from src.pricing.domain.pricing import convenience_fee_centavos
 from src.pricing.service import pricing_service
@@ -295,6 +301,81 @@ class BookingService:
         group = await self.get_scoped(session, booking_id, scope=scope)
         can_set_outcome(snapshot(group), datetime.now(UTC))
         await booking_repository.set_status(session, group, outcome)
+        await session.commit()
+        return group
+
+    # ── closures ─────────────────────────────────────────────────────────
+
+    async def close_courts(
+        self, session: AsyncSession, staff: UserModel, body: ClosureRequest, *, scope: VenueScope
+    ) -> list[BookingGroupModel]:
+        """All or nothing. A closure can never evict a booking: the slot
+        index refuses it, and staff must cancel the booking first, on the
+        record (spec §6.5)."""
+        now = datetime.now(UTC)
+        check_on_the_hour(body.starts_at)
+        check_on_the_hour(body.ends_at)
+        hours = int((body.ends_at - body.starts_at) / SLOT)
+        if hours < 1:
+            raise BookingError("EMPTY_RANGE", "The closure must end after it starts.", "invalid")
+        if hours > MAX_CLOSURE * 24:
+            raise BookingError(
+                "RANGE_TOO_LONG", f"Close at most {MAX_CLOSURE} days at a time.", "invalid"
+            )
+        if body.starts_at < now.replace(minute=0, second=0, microsecond=0):
+            raise BookingError("IN_THE_PAST", "A closure cannot start in the past.", "invalid")
+
+        court_ids = list(dict.fromkeys(body.court_ids))  # dedupe, keep order
+        for court_id in court_ids:
+            await court_service.get(session, court_id, scope=scope)  # 404 if not yours
+        starts = slot_starts(body.starts_at, hours)
+
+        groups = []
+        # One savepoint around every court, so a collision on the third
+        # court also undoes the first two.
+        async with session.begin_nested():
+            for court_id in court_ids:
+                await booking_repository.expire_lapsed(session, court_id, starts, now)
+                groups.append(
+                    await booking_repository.insert(
+                        session,
+                        fields={
+                            "court_id": court_id,
+                            "player_id": None,
+                            "type": BookingType.MAINTENANCE,
+                            "booking_status": BookingStatus.CONFIRMED,
+                            "payment_status": PaymentStatus.UNPAID,
+                            "price_centavos": 0,
+                            "fee_centavos": 0,
+                            "total_centavos": 0,
+                            "notes": body.reason,
+                            "created_by_user_id": staff.id,
+                        },
+                        slot_prices=[(s, 0) for s in starts],
+                    )
+                )
+        await session.commit()
+        return groups
+
+    async def reopen(
+        self,
+        session: AsyncSession,
+        staff: UserModel,
+        closure_id: int,
+        reason: str,
+        *,
+        scope: VenueScope,
+    ) -> BookingGroupModel:
+        group = await self.get_scoped(session, closure_id, scope=scope)
+        can_cancel_closure(snapshot(group))
+        await booking_repository.set_status(
+            session,
+            group,
+            BookingStatus.CANCELLED,
+            cancelled_at=datetime.now(UTC),
+            cancelled_by_user_id=staff.id,
+            cancellation_reason=reason,
+        )
         await session.commit()
         return group
 
