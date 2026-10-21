@@ -58,7 +58,7 @@ objects with no SQLAlchemy imports. CRUD features (`venues`, `courts`,
 rules (prices, windows, caps — in Postgres, tunable without a deploy). Do not
 conflate them.
 
-## What exists now (Phase 2 complete)
+## What exists now (Phase 3 complete)
 
 | Module | Provides |
 |---|---|
@@ -81,10 +81,23 @@ conflate them.
 | `src/users/domain/roles.py` | `RoleCode`, `PERMISSIONS`, `ROLE_PERMISSIONS` — the migration seeds from these |
 | `src/users/persistence/repository.py` | `user_repository` — `list`/`get_scoped` take `scope=` with no default |
 | `src/users/cli.py` | `create-super-admin` — the only way a SUPER_ADMIN is made |
-| `src/venues/persistence/models.py` | `VenueModel` — the table only; Phase 3 adds endpoints |
+| `src/venues/` | `venue_repository`, `venue_service`; admin routes (`VENUE:Manage`) and the catalog (`GET /venues`, `/venues/{id}/courts`) |
+| `src/courts/` | `CourtModel`, `court_repository`, `court_service` (`get` → scoped 404); admin routes (`COURT:Manage`) |
+| `src/pricing/domain/pricing.py` | `PriceRule`, `PriceResolver(rules, default).price_at(starts_at)`, `convenience_fee_centavos` — pure |
+| `src/pricing/service.py` | `pricing_service.resolver_for(session, court_id, scope=)` — one query, then in-memory |
 
-Phase 3 adds venues/courts/pricing routers and takes `scope: VenueScope` on
-every repository method for them.
+Phase 4 (booking core) builds availability on `PriceResolver` — one
+resolver per court, never a query per cell — and freezes prices on the
+booking rows.
+
+## Venue scope in practice
+
+- `scope.where(column)` filters on the row's OWN `venue_id` (a court's, or a
+  rule's court's) — never on an id taken from the URL.
+- The catalog passes `VenueScope.everything()` explicitly. Never omit a
+  scope; if a read genuinely spans venues, say so with `everything()`.
+- `*_service.get(..., scope=)` raises 404 `NOT_FOUND` for out-of-scope rows.
+  Use it before acting on a child resource (court before its price rules).
 
 ## Auth rules (Phase 2)
 
