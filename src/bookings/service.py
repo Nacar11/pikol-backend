@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.scope import VenueScope
 from src.bookings.domain.enums import BookingStatus, BookingType, PaymentStatus
 from src.bookings.domain.rules import (
+    can_cancel_by_player,
     check_on_the_hour,
     check_player_window,
     slot_starts,
@@ -12,6 +13,7 @@ from src.bookings.domain.rules import (
 from src.bookings.dto import Availability, GridCourt, GridSlot, GridStatus, HoldRequest
 from src.bookings.persistence.models import BookingGroupModel
 from src.bookings.persistence.repository import booking_repository
+from src.bookings.service_support import snapshot
 from src.courts.persistence.models import CourtModel
 from src.courts.persistence.repository import court_repository
 from src.parameters.service import parameter_service
@@ -27,8 +29,15 @@ from src.venues.service import venue_service
 CATALOG = VenueScope.everything()
 
 
+PLAYER_CANCEL_REASON = "Cancelled by player"
+
+
 def court_not_found() -> AppError:
     return AppError(404, "NOT_FOUND", "Court not found.")
+
+
+def booking_not_found() -> AppError:
+    return AppError(404, "NOT_FOUND", "Booking not found.")
 
 
 class BookingService:
@@ -146,6 +155,36 @@ class BookingService:
                 for c in courts
             ],
         )
+
+    async def get_for_player(
+        self, session: AsyncSession, player: UserModel, booking_id: int
+    ) -> BookingGroupModel:
+        group = await booking_repository.get_for_player(session, booking_id, player.id)
+        if group is None:
+            raise booking_not_found()  # someone else's booking looks exactly like none
+        return group
+
+    async def cancel_by_player(
+        self, session: AsyncSession, player: UserModel, booking_id: int, reason: str | None
+    ) -> BookingGroupModel:
+        """Abandon a live hold, or cancel a confirmed booking before the
+        cutoff. No refund (spec decision 9); the slot returns to inventory."""
+        now = datetime.now(UTC)
+        group = await self.get_for_player(session, player, booking_id)
+        params = await parameter_service.get(session)
+        can_cancel_by_player(
+            snapshot(group), now, cutoff_minutes=params.cancellation_cutoff_minutes
+        )
+        await booking_repository.set_status(
+            session,
+            group,
+            BookingStatus.CANCELLED,
+            cancelled_at=now,
+            cancelled_by_user_id=player.id,
+            cancellation_reason=reason or PLAYER_CANCEL_REASON,
+        )
+        await session.commit()
+        return group
 
 
 booking_service = BookingService()

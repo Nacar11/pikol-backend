@@ -208,5 +208,31 @@ class BookingRepository:
         )
         return {(court_id, starts_at): type_ for court_id, starts_at, type_ in rows}
 
+    # Player self-service: `player_id` comes from the token and IS the scope.
+
+    async def list_for_player(
+        self, session: AsyncSession, player_id: int, *, page: int, limit: int
+    ) -> tuple[list[BookingGroupModel], int]:
+        mine = BookingGroupModel.player_id == player_id
+        total = (await session.execute(select(func.count()).where(mine))).scalar_one()
+        rows = await session.execute(
+            select(BookingGroupModel)
+            .where(mine)
+            .order_by(BookingGroupModel.created_at.desc(), BookingGroupModel.id.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+        return list(rows.scalars().unique().all()), total
+
+    async def get_for_player(
+        self, session: AsyncSession, booking_id: int, player_id: int
+    ) -> BookingGroupModel | None:
+        result = await session.execute(
+            select(BookingGroupModel).where(
+                BookingGroupModel.id == booking_id, BookingGroupModel.player_id == player_id
+            )
+        )
+        return result.unique().scalar_one_or_none()
+
 
 booking_repository = BookingRepository()
