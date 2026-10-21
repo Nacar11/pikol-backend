@@ -4,6 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth.rate_limit import limiter
 from src.database.session import engine, get_session
 from src.email.adapters import MemoryEmailSender
 from src.email.port import get_email_sender
@@ -23,6 +24,14 @@ async def _dispose_engine_between_tests() -> AsyncGenerator[None, None]:
     """
     yield
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits() -> None:
+    """The limiter's buckets live in process memory and every test client
+    shares one IP, so without this the 11th login of the SESSION — not of
+    the test — would be refused."""
+    limiter.reset()
 
 
 @pytest.fixture

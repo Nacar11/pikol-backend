@@ -58,7 +58,7 @@ objects with no SQLAlchemy imports. CRUD features (`venues`, `courts`,
 rules (prices, windows, caps — in Postgres, tunable without a deploy). Do not
 conflate them.
 
-## What exists now (Phase 1 complete)
+## What exists now (Phase 2 complete)
 
 | Module | Provides |
 |---|---|
@@ -69,16 +69,51 @@ conflate them.
 | `src/parameters/service.py` | `ParameterService`, `parameter_service` (TTL-cached) |
 | `src/utils/request_id.py` | `RequestIDMiddleware`, `request_id_var` |
 | `src/utils/log.py` | `configure_logging(debug)` — JSON lines carrying request_id |
-| `src/utils/errors.py` | `register_exception_handlers(app)`, `ErrorResponse` |
+| `src/utils/errors.py` | `AppError(status, code, detail)`, `register_exception_handlers(app)`, `ErrorResponse` |
 | `src/utils/pagination.py` | `Page[T]`, `Page.of(...)` |
 | `src/utils/time.py` | `MANILA`, `manila_day_bounds(day)` |
+| `src/auth/dependencies.py` | `get_current_user`, `require_permission(code)`, `require_super_admin`, `forbidden()` |
+| `src/auth/scope.py` | `VenueScope(all_venues, venue_id).where(column)`, `get_venue_scope` |
+| `src/auth/security.py` | argon2 passwords, HS256 access/refresh JWTs, hashed single-use email tokens |
+| `src/auth/service.py` | `auth_service` — register, verify, login, refresh rotation, logout, reset, accept invite; `insert_user` |
+| `src/auth/rate_limit.py` | `limiter` (slowapi), `LOGIN_LIMIT`, `EMAIL_LIMIT` |
+| `src/email/port.py` | `EmailMessage`, `EmailSender`, `get_email_sender`, `send_quietly` |
+| `src/users/domain/roles.py` | `RoleCode`, `PERMISSIONS`, `ROLE_PERMISSIONS` — the migration seeds from these |
+| `src/users/persistence/repository.py` | `user_repository` — `list`/`get_scoped` take `scope=` with no default |
+| `src/users/cli.py` | `create-super-admin` — the only way a SUPER_ADMIN is made |
+| `src/venues/persistence/models.py` | `VenueModel` — the table only; Phase 3 adds endpoints |
 
-Phase 2 adds auth routers to `create_app()`, models extending `Base`, and the
-FK from `parameters.updated_by_user_id` to `users`.
+Phase 3 adds venues/courts/pricing routers and takes `scope: VenueScope` on
+every repository method for them.
+
+## Auth rules (Phase 2)
+
+- **Expected failures raise `AppError(status, code, detail)`**, never
+  `HTTPException` — the envelope carries `code`, which the frontend branches
+  on (`EMAIL_NOT_VERIFIED` renders a resend action).
+- **Login reveals account state only after a correct password.** Unknown
+  email and wrong password are the same 401 `INVALID_CREDENTIALS`, and an
+  unknown email still runs argon2 against a dummy hash so timing matches.
+- **Every request loads the user.** That is what makes deactivation
+  immediate; do not "optimise" it into trusting token claims.
+- **Refresh replay revokes the whole family** (asima ADR 0002). Password
+  change, password reset, logout, and deactivation all revoke every refresh
+  token.
+- **Privilege fields come from the token or the endpoint, never the body.**
+  The manager invite route has no role or venue field at all.
+- **Email is sent after commit, via `send_quietly`**, which logs and swallows
+  failures — every email has a resend path.
+- **`EMAIL_PROVIDER=console` logs live tokens.** Development only; Phase 9
+  adds a real sender before go-live.
 
 ## Testing
 
 - `pytest-asyncio` is in **auto** mode; async tests need no decorator.
+- **`outbox`** is a `MemoryEmailSender` wired into `client`; read emailed
+  links back from `outbox.outbox[-1].body`.
+- **`tests/auth/helpers.py`** — `make_user`, `make_venue`, `login`, `bearer`.
+- The rate limiter is reset before every test; its buckets are in-process
+  and every test client shares one IP.
 - **`db_session`** wraps each test in a transaction that is always rolled
   back. The test sees its own writes — including after `commit()` — and the
   database never does. Use it for every write test.
@@ -131,6 +166,7 @@ docker compose up -d                       # local Postgres, host port 5433
 uv sync
 uv run alembic upgrade head
 uv run uvicorn src.main:app --reload --no-access-log
+uv run python -m src.users.cli create-super-admin --email … --first-name … --last-name …
 uv run ruff format . && uv run ruff check . && uv run mypy src && uv run pytest
 ```
 

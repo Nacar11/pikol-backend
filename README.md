@@ -11,8 +11,15 @@ cp .env.example .env
 docker compose up -d
 uv sync
 uv run alembic upgrade head
+uv run python -m src.users.cli create-super-admin \
+    --email you@example.com --first-name You --last-name Owner   # once; prompts for a password
 uv run uvicorn src.main:app --reload --no-access-log
 ```
+
+`.env` needs a `JWT_SECRET` of at least 32 characters — generate one with
+`openssl rand -hex 32`. With `EMAIL_PROVIDER=console`, verification, reset,
+and invitation emails are printed to the server log instead of sent; copy the
+link from there.
 
 API docs at http://localhost:8000/docs, health at
 http://localhost:8000/health.

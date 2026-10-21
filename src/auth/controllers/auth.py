@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.dependencies import get_current_user
@@ -12,6 +12,7 @@ from src.auth.dto import (
     TokenPair,
     TokenRequest,
 )
+from src.auth.rate_limit import EMAIL_LIMIT, LOGIN_LIMIT, limiter
 from src.auth.service import auth_service
 from src.database.session import get_session
 from src.email.port import EmailSender, get_email_sender, send_quietly
@@ -24,7 +25,9 @@ router = APIRouter(prefix=f"{API_PREFIX}/auth", tags=["auth"])
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
+@limiter.limit(EMAIL_LIMIT)
 async def register(
+    request: Request,
     body: RegisterRequest,
     session: AsyncSession = Depends(get_session),
     sender: EmailSender = Depends(get_email_sender),
@@ -42,7 +45,9 @@ async def verify_email(body: TokenRequest, session: AsyncSession = Depends(get_s
 
 
 @router.post("/verify-email/resend", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit(EMAIL_LIMIT)
 async def resend_verification(
+    request: Request,
     body: EmailRequest,
     session: AsyncSession = Depends(get_session),
     sender: EmailSender = Depends(get_email_sender),
@@ -56,7 +61,10 @@ async def resend_verification(
 
 
 @router.post("/login")
-async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)) -> TokenPair:
+@limiter.limit(LOGIN_LIMIT)
+async def login(
+    request: Request, body: LoginRequest, session: AsyncSession = Depends(get_session)
+) -> TokenPair:
     return await auth_service.login(session, body.email, body.password)
 
 
@@ -73,7 +81,9 @@ async def logout(
 
 
 @router.post("/password/forgot", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit(EMAIL_LIMIT)
 async def forgot_password(
+    request: Request,
     body: EmailRequest,
     session: AsyncSession = Depends(get_session),
     sender: EmailSender = Depends(get_email_sender),
