@@ -20,6 +20,13 @@ class VenueScope:
     all_venues: bool  # SUPER_ADMIN
     venue_id: int | None  # VENUE_MANAGER / VENUE_STAFF
 
+    @classmethod
+    def everything(cls) -> "VenueScope":
+        """For the player-facing catalog, which deliberately spans every
+        venue. Passed explicitly so "unscoped" is a visible, greppable
+        decision at the call site — never an omission."""
+        return cls(all_venues=True, venue_id=None)
+
     def where(self, column: SQLColumnExpression[int | None]) -> ColumnElement[bool]:
         if self.all_venues:
             return true()

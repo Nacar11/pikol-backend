@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,9 @@ from src.users.persistence.models import UserModel
 from src.users.persistence.repository import user_repository
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
+
+if TYPE_CHECKING:
+    from src.courts.persistence.models import CourtModel
 
 AUTH = f"{API_PREFIX}/auth"
 PASSWORD = "correct-horse-1"
@@ -62,3 +65,14 @@ async def login(client: AsyncClient, email: str, password: str = PASSWORD) -> di
 
 def bearer(tokens: dict[str, Any]) -> dict[str, str]:
     return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
+async def make_court(
+    session: AsyncSession, venue_id: int, name: str = "Court", *, sort_order: int = 0
+) -> "CourtModel":
+    from src.courts.persistence.models import CourtModel
+
+    court = CourtModel(venue_id=venue_id, name=name, sort_order=sort_order)
+    session.add(court)
+    await session.flush()
+    return court
