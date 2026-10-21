@@ -304,3 +304,25 @@ async def test_resend_after_accept_is_409(client: AsyncClient, world: World) -> 
 
     assert response.status_code == 409
     assert response.json()["code"] == "ALREADY_ACCEPTED"
+
+
+async def test_deactivated_invitee_cannot_reactivate_via_old_link(
+    client: AsyncClient, world: World, outbox: MemoryEmailSender
+) -> None:
+    """Accepting an invitation sets is_active = True. If deactivation left the
+    link alive, the invitee could undo their own deactivation."""
+    created = await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=INVITEE)
+    token = _invite_token(outbox)
+
+    await client.patch(
+        f"{ADMIN}/users/{created.json()['id']}",
+        headers=world.manager_a,
+        json={"is_active": False},
+    )
+    accept = await client.post(
+        f"{AUTH}/invitations/accept", json={"token": token, "password": "my-own-pass-1"}
+    )
+
+    assert accept.status_code == 400
+    me = await client.get(f"{ADMIN}/users/{created.json()['id']}", headers=world.manager_a)
+    assert me.json()["is_active"] is False

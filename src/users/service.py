@@ -137,6 +137,14 @@ class UserService:
             # Access tokens already die on the next request (the user is
             # loaded each time); this ends the 7-day refresh window too.
             await auth_service.revoke_all(session, target.id)
+            # And every outstanding emailed link: accepting an invitation or
+            # verifying an email sets is_active = True, so a live link would
+            # let the user undo their own deactivation.
+            await session.execute(
+                delete(UserTokenModel).where(
+                    UserTokenModel.user_id == target.id, UserTokenModel.used_at.is_(None)
+                )
+            )
         await session.commit()
         await session.refresh(target, ["role"])
         return target
