@@ -1,14 +1,17 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.dependencies import require_player
+from src.auth.rate_limit import limiter
 from src.bookings.dto import BookingOut, CheckoutBookingOut, HoldRequest, PlayerCancelRequest
 from src.bookings.persistence.repository import booking_repository
 from src.bookings.service import booking_service
 from src.database.session import get_session
+from src.email.port import EmailSender, get_email_sender
 from src.payments.domain.port import PaymentProvider
+from src.payments.persistence.repository import payment_repository
 from src.payments.provider import get_payment_provider
 from src.payments.service import payment_service
 from src.users.persistence.models import UserModel
@@ -88,3 +91,26 @@ async def retry_checkout(
     return CheckoutBookingOut(
         **BookingOut.of(group, datetime.now(UTC)).model_dump(), checkout_url=url
     )
+
+
+@router.post("/me/{booking_id}/refresh-payment")
+@limiter.limit("10/minute")
+async def refresh_payment(
+    request: Request,
+    booking_id: int,
+    player: UserModel = Depends(require_player),
+    session: AsyncSession = Depends(get_session),
+    provider: PaymentProvider = Depends(get_payment_provider),
+    sender: EmailSender = Depends(get_email_sender),
+) -> BookingOut:
+    """Ask the provider about this booking's latest checkout and apply what
+    it says — through the same idempotent path as the webhook. Closes the
+    gap when every webhook attempt landed on a sleeping backend (ADR 0002).
+    The return page calls it while it polls."""
+    group = await booking_service.get_for_player(session, player, booking_id)
+    latest = await payment_repository.latest_for_group(session, group.id)
+    if latest is not None:
+        await payment_service.sync_payment(session, provider, latest.provider_checkout_id, sender)
+        group = await booking_service.get_for_player(session, player, booking_id)
+        await session.refresh(group)
+    return BookingOut.of(group, datetime.now(UTC))
