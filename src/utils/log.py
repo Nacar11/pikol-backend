@@ -18,7 +18,7 @@ class JsonFormatter(logging.Formatter):
         payload: dict[str, Any] = {
             # Without this, a line grepped out of Render's viewer and pasted
             # into a ticket loses all timing — you cannot tell whether the 409
-            # preceded the webhook, or line anything up against PayMongo's
+            # preceded the webhook, or line anything up against Maya's
             # timestamps during a payment dispute.
             "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "level": record.levelname,
