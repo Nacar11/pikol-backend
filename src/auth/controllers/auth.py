@@ -1,12 +1,21 @@
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.dto import EmailRequest, RegisterRequest, TokenRequest
+from src.auth.dependencies import get_current_user
+from src.auth.dto import (
+    EmailRequest,
+    LoginRequest,
+    RefreshRequest,
+    RegisterRequest,
+    TokenPair,
+    TokenRequest,
+)
 from src.auth.service import auth_service
 from src.database.session import get_session
 from src.email.port import EmailSender, get_email_sender, send_quietly
 from src.email.templates import verification_email
 from src.users.dto import UserOut
+from src.users.persistence.models import UserModel
 from src.utils.api import API_PREFIX
 
 router = APIRouter(prefix=f"{API_PREFIX}/auth", tags=["auth"])
@@ -42,3 +51,20 @@ async def resend_verification(
         user, token = issued
         await send_quietly(sender, verification_email(user.email, user.first_name, token))
     return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post("/login")
+async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)) -> TokenPair:
+    return await auth_service.login(session, body.email, body.password)
+
+
+@router.post("/refresh")
+async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_session)) -> TokenPair:
+    return await auth_service.refresh(session, body.refresh_token)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    user: UserModel = Depends(get_current_user), session: AsyncSession = Depends(get_session)
+) -> None:
+    await auth_service.logout(session, user)

@@ -1,12 +1,23 @@
 from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.dto import RegisterRequest
-from src.auth.persistence.models import TokenPurpose, UserTokenModel
-from src.auth.security import hash_opaque_token, hash_password, new_opaque_token
+from src.auth.dto import RegisterRequest, TokenPair
+from src.auth.persistence.models import RefreshTokenModel, TokenPurpose, UserTokenModel
+from src.auth.security import (
+    decode,
+    encode_access,
+    encode_refresh,
+    hash_opaque_token,
+    hash_password,
+    invalid_token,
+    new_opaque_token,
+    verify_password,
+)
+from src.config.settings import get_settings
 from src.users.domain.roles import RoleCode
 from src.users.persistence.models import UserModel
 from src.users.persistence.repository import user_repository
@@ -131,6 +142,97 @@ class AuthService:
         )
         await session.commit()
         return user, token
+
+    async def issue_pair(self, session: AsyncSession, user: UserModel) -> TokenPair:
+        """Mint an access + refresh pair and record the refresh jti."""
+        jti = uuid4()
+        refresh_token, expires_at = encode_refresh(user.id, jti)
+        session.add(RefreshTokenModel(user_id=user.id, jti=jti, expires_at=expires_at))
+        await session.flush()
+        return TokenPair(
+            access_token=encode_access(user.id),
+            refresh_token=refresh_token,
+            expires_in=get_settings().access_token_minutes * 60,
+        )
+
+    async def revoke_all(self, session: AsyncSession, user_id: int) -> None:
+        await session.execute(
+            update(RefreshTokenModel)
+            .where(RefreshTokenModel.user_id == user_id, RefreshTokenModel.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+
+    async def login(self, session: AsyncSession, email: str, password: str) -> TokenPair:
+        """Check order matters: account state is revealed only AFTER a correct
+        password, so the distinct errors cannot be used to probe accounts."""
+        user = await user_repository.get_by_email(session, email)
+        hashed = None
+        if user is not None:
+            await session.refresh(user, ["password_hash"])
+            hashed = user.password_hash
+        # Always verify — against a dummy hash when there is no user — so an
+        # unknown email costs the same time as a wrong password.
+        if not verify_password(password, hashed) or user is None:
+            raise AppError(401, "INVALID_CREDENTIALS", "Incorrect email or password.")
+        if user.email_verified_at is None:
+            raise AppError(403, "EMAIL_NOT_VERIFIED", "Verify your email before logging in.")
+        if not user.is_active:
+            raise AppError(403, "ACCOUNT_DISABLED", "This account has been disabled.")
+
+        user.last_login_at = datetime.now(UTC)
+        pair = await self.issue_pair(session, user)
+        await session.commit()
+        return pair
+
+    async def refresh(self, session: AsyncSession, raw: str) -> TokenPair:
+        """Rotate: revoke the presented jti and issue a new pair (asima ADR 0002).
+
+        The conditional UPDATE is the rotation AND the race guard — two
+        concurrent refreshes of one token cannot both win it.
+        """
+        claims = decode(raw, "refresh")
+        try:
+            jti = UUID(claims["jti"])
+        except (KeyError, ValueError):
+            raise invalid_token() from None
+        now = datetime.now(UTC)
+
+        user_id = (
+            await session.execute(
+                update(RefreshTokenModel)
+                .where(
+                    RefreshTokenModel.jti == jti,
+                    RefreshTokenModel.revoked_at.is_(None),
+                    RefreshTokenModel.expires_at > now,
+                )
+                .values(revoked_at=now)
+                .returning(RefreshTokenModel.user_id)
+            )
+        ).scalar_one_or_none()
+
+        if user_id is None:
+            row = (
+                await session.execute(select(RefreshTokenModel).where(RefreshTokenModel.jti == jti))
+            ).scalar_one_or_none()
+            if row is not None and row.revoked_at is not None:
+                # Replay of a rotated-away token: kill the whole family.
+                await self.revoke_all(session, row.user_id)
+                await session.commit()
+            raise invalid_token()
+
+        user = await user_repository.get_by_id(session, user_id)
+        if user is None or not user.is_active:
+            await session.commit()  # keep the rotation's revocation
+            raise invalid_token()
+
+        pair = await self.issue_pair(session, user)
+        await session.commit()
+        return pair
+
+    async def logout(self, session: AsyncSession, user: UserModel) -> None:
+        """Revokes every refresh token — logout ends all devices."""
+        await self.revoke_all(session, user.id)
+        await session.commit()
 
 
 auth_service = AuthService()
