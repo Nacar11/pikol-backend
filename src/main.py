@@ -12,6 +12,7 @@ from src.bookings.http_errors import register_booking_errors
 from src.config.settings import Settings, get_settings
 from src.courts.controllers.admin import router as admin_courts_router
 from src.health.controllers.health import router as health_router
+from src.payments.controllers.webhooks import router as webhooks_router
 from src.pricing.controllers.admin import router as admin_pricing_router
 from src.users.controllers.admin import router as admin_users_router
 from src.users.controllers.me import router as me_router
@@ -69,6 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(bookings_router)
     app.include_router(admin_bookings_router)
     app.include_router(closures_router)
+    app.include_router(webhooks_router)
     return app
 
 
