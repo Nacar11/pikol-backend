@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # because isort orders a plain `import x` before `from x import y` within the
 # same section — placed below them, `ruff check .` fails on I001, and CI runs
 # that gate.
+import src.auth.persistence.models  # noqa: F401
 import src.parameters.persistence.models  # noqa: F401
+import src.users.persistence.models  # noqa: F401
+import src.venues.persistence.models  # noqa: F401
 from src.config.settings import get_settings
 from src.database.base import Base
 
