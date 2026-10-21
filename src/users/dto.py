@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from src.users.domain.roles import RoleCode
 from src.users.persistence.models import UserModel
@@ -48,3 +49,34 @@ class PasswordChangeRequest(BaseModel):
 
     current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class StaffInviteRequest(BaseModel):
+    """The MANAGER's invite. Role and venue are absent by construction: the
+    server fixes role = VENUE_STAFF and venue = the caller's own (spec §6.4).
+    extra="forbid" turns a smuggled role_id or venue_id into a 422."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    mobile: str | None = Field(default=None, max_length=32)
+
+
+class AdminInviteRequest(StaffInviteRequest):
+    """The SUPER_ADMIN's invite, where choosing role and venue is the
+    legitimate case. SUPER_ADMIN itself is not offered — only the CLI makes
+    one."""
+
+    role: Literal[RoleCode.VENUE_MANAGER, RoleCode.VENUE_STAFF]
+    venue_id: int
+
+
+class AdminUserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    mobile: str | None = Field(default=None, max_length=32)
+    is_active: bool | None = None

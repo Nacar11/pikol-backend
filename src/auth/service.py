@@ -259,5 +259,14 @@ class AuthService:
         await self.revoke_all(session, user.id)
         await session.commit()
 
+    async def accept_invitation(self, session: AsyncSession, raw: str, password: str) -> None:
+        """Verification and first password in one step (spec §6.6). The
+        manager never sets, knows, or transmits the password."""
+        user = await self.consume_token(session, raw, TokenPurpose.INVITATION)
+        user.password_hash = hash_password(password)
+        user.email_verified_at = datetime.now(UTC)
+        user.is_active = True
+        await session.commit()
+
 
 auth_service = AuthService()

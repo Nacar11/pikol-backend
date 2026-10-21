@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.dependencies import get_current_user
 from src.auth.dto import (
+    AcceptInvitationRequest,
     EmailRequest,
     LoginRequest,
     PasswordResetRequest,
@@ -90,3 +91,10 @@ async def reset_password(
     body: PasswordResetRequest, session: AsyncSession = Depends(get_session)
 ) -> None:
     await auth_service.reset_password(session, body.token, body.new_password)
+
+
+@router.post("/invitations/accept", status_code=status.HTTP_204_NO_CONTENT)
+async def accept_invitation(
+    body: AcceptInvitationRequest, session: AsyncSession = Depends(get_session)
+) -> None:
+    await auth_service.accept_invitation(session, body.token, body.password)

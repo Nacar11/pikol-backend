@@ -58,3 +58,10 @@ class PasswordResetRequest(BaseModel):
 
     token: str = Field(min_length=1, max_length=256)
     new_password: str = Password
+
+
+class AcceptInvitationRequest(BaseModel):
+    model_config = Forbid
+
+    token: str = Field(min_length=1, max_length=256)
+    password: str = Password
