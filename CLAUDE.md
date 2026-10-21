@@ -58,7 +58,7 @@ objects with no SQLAlchemy imports. CRUD features (`venues`, `courts`,
 rules (prices, windows, caps — in Postgres, tunable without a deploy). Do not
 conflate them.
 
-## What exists now (Phase 4 complete)
+## What exists now (Phase 5 complete on the mock; Maya adapter pending)
 
 | Module | Provides |
 |---|---|
@@ -91,10 +91,28 @@ conflate them.
 | `src/bookings/service.py` | `booking_service` — holds, availability, player cancel, walk-ins, staff cancel, mark-paid, outcome, closures |
 | `src/bookings/http_errors.py` | maps `BookingError.kind` → 422 (`invalid`) / 409 (`conflict`) |
 
-Phase 5 (payments) adds the provider port, `MockProvider`, `MayaProvider`,
-checkout on `POST /bookings`, the webhook calling
-`can_confirm_online_payment` → `set_status(CONFIRMED)`, late-payment
-re-acquisition, and the unfulfilled queue. Read ADR 0002 first.
+| `src/payments/domain/port.py` | `PaymentProvider` (`create_checkout`, `parse_webhook` — untrusted, `fetch_payment` — authoritative), `ProviderError`, `PaymentNotFound` |
+| `src/payments/adapters/maya_wire.py` | Maya's JSON shapes, `to_pesos`/`from_pesos`, status map — the ONLY place pesos exist |
+| `src/payments/adapters/mock.py` | `MockProvider` — Maya-shaped JSON in memory, read back through `maya_wire` |
+| `src/payments/provider.py` | `get_payment_provider` (by `PAYMENT_PROVIDER`; only `mock` today) |
+| `src/payments/service.py` | `payment_service.start_checkout`, **`sync_payment`** (fetch → record event once → apply), late-payment re-acquisition, `needs_resolution` flagging, receipt |
+| `src/payments/controllers/` | `POST /webhooks/maya`; the mock checkout page (only if `MOCK_CHECKOUT_ENABLED`) |
+
+**Next:** `MayaProvider` — an httpx adapter over `maya_wire` (public key for
+Create Checkout, secret key for Retrieve Payment, sandbox base URL). Its first
+job is to confirm `maya_wire`'s field names against real sandbox responses.
+Then Phase 6 (frontend).
+
+## Payment rules in practice (ADR 0002)
+
+- **Never act on a webhook body.** `sync_payment` takes a payment id and
+  asks the provider; the webhook and `refresh-payment` both go through it.
+- **The event insert is the idempotency check** (`"{payment_id}:{status}"`).
+  Do not add an "already processed?" SELECT.
+- **Money with no court is flagged, never dropped.** Any paid-but-unhousable
+  outcome sets `needs_resolution` and leaves a `[system]` note.
+- **Provider calls happen after the hold commits**, never inside it.
+- **`MOCK_CHECKOUT_ENABLED` must be false on any public deploy.**
 
 ## Booking rules in practice
 
@@ -148,6 +166,9 @@ re-acquisition, and the unfulfilled queue. Read ADR 0002 first.
 - **`outbox`** is a `MemoryEmailSender` wired into `client`; read emailed
   links back from `outbox.outbox[-1].body`.
 - **`tests/auth/helpers.py`** — `make_user`, `make_venue`, `login`, `bearer`.
+- **`provider`** is a fresh `MockProvider` wired into `client`;
+  `tests/payments/helpers.py` — `pay(...)` settles and delivers the webhook,
+  `checkout_id`, `group` (reloads a booking with its slots).
 - `tests/bookings/conftest.py` — a two-venue `world`, `hold(...)`,
   `set_parameter(...)`; `tests/bookings/helpers.py` — `next_hour`,
   `insert_booking`. The parameter cache is invalidated before every test.
