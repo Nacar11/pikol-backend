@@ -89,6 +89,8 @@ class BookingOut(BaseModel):
     reference_code: str
     court_id: int
     venue_id: int
+    court_name: str
+    venue_name: str
     type: BookingType
     booking_status: BookingStatus
     payment_status: PaymentStatus
@@ -116,6 +118,8 @@ class BookingOut(BaseModel):
             reference_code=group.reference_code,
             court_id=group.court_id,
             venue_id=group.court.venue_id,
+            court_name=group.court.name,
+            venue_name=group.court.venue.name,
             type=group.type,
             booking_status=group.booking_status,
             payment_status=group.payment_status,

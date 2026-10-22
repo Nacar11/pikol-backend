@@ -39,6 +39,13 @@ async def test_hold_returns_a_checkout(
     assert stored["totalAmount"] == {"value": "1030.00", "currency": "PHP"}  # ₱1,000 + 3%
 
 
+async def test_hold_response_carries_names(client: AsyncClient, world: World) -> None:
+    booking = await hold(client, world.player, world.a.court.id, next_hour())
+
+    assert booking["court_name"] == world.a.court.name
+    assert booking["venue_name"] == world.a.venue.name
+
+
 async def test_provider_outage_is_502_and_keeps_the_hold(
     client: AsyncClient,
     world: World,

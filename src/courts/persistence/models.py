@@ -1,11 +1,12 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func, true
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 import src.users.persistence.models  # noqa: F401  (audit FK target)
 import src.venues.persistence.models  # noqa: F401  (venue_id FK target)
 from src.database.base import Base
+from src.venues.persistence.models import VenueModel
 
 
 class CourtModel(Base):
@@ -19,6 +20,7 @@ class CourtModel(Base):
     venue_id: Mapped[int] = mapped_column(
         ForeignKey("venues.id", ondelete="RESTRICT"), nullable=False
     )
+    venue: Mapped[VenueModel] = relationship(lazy="joined")
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     # Column order in the availability grid. Without it the grid reorders
     # whenever row order changes.

@@ -24,6 +24,17 @@ async def test_my_bookings_lists_only_mine_newest_first(client: AsyncClient, wor
     assert response.json()["total"] == 2
 
 
+async def test_my_bookings_carry_court_and_venue_names(client: AsyncClient, world: World) -> None:
+    booking = await hold(client, world.player, world.a.court.id, next_hour())
+
+    listed = await client.get(MINE, headers=world.player)
+    single = await client.get(f"{MINE}/{booking['id']}", headers=world.player)
+
+    for item in (listed.json()["data"][0], single.json()):
+        assert item["court_name"] == world.a.court.name
+        assert item["venue_name"] == world.a.venue.name
+
+
 async def test_other_players_booking_is_404(client: AsyncClient, world: World) -> None:
     theirs = await hold(client, world.player2, world.a.court.id, next_hour())
 
