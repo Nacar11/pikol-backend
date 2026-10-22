@@ -67,6 +67,12 @@ class BookingRepository:
                 if name == REFERENCE_CONSTRAINT:
                     continue
                 raise
+            # lazy="joined" applies to SELECTs only, so a group built here has
+            # no court/player loaded. Touching one later lazy-loads — IO
+            # outside the greenlet, MissingGreenlet, a 500 — unless the
+            # identity map happens to still hold the row. Load them now, so
+            # every caller gets a group it can serialise.
+            await session.refresh(group, attribute_names=["court", "player"])
             return group
         raise RuntimeError("could not allocate a unique booking reference")
 
