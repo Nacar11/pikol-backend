@@ -67,6 +67,7 @@ conflate them.
 | `src/database/session.py` | `engine`, `SessionLocal`, `get_session` |
 | `src/database/base.py` | `Base` — every model extends it |
 | `src/parameters/service.py` | `ParameterService`, `parameter_service` (TTL-cached) |
+| `src/parameters/admin.py` | `parameter_admin_service.update` — row-locked, validates the WHOLE `Parameters` model with the candidate value (a cross-field break is `422 INVALID_PARAMETER`, detail `"{key}: msg"`; unknown key `404`), stamps `updated_at`/`updated_by_user_id`, commits, then invalidates the cache. Routes: `GET /admin/parameters`, `PATCH /admin/parameters/{key}` `{value: str}`, both `PARAMETER:Manage` |
 | `src/utils/request_id.py` | `RequestIDMiddleware`, `request_id_var` |
 | `src/utils/log.py` | `configure_logging(debug)` — JSON lines carrying request_id |
 | `src/utils/errors.py` | `AppError(status, code, detail)`, `register_exception_handlers(app)`, `ErrorResponse` |
