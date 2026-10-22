@@ -1,4 +1,7 @@
+from typing import Any
+
 from httpx import AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.parameters.persistence.models import ParameterModel
@@ -66,6 +69,7 @@ async def test_patch_rejects_cross_field_rule(
     response = await client.patch(f"{URL}/min_lead_minutes", json={"value": "5"}, headers=headers)
     assert response.status_code == 422
     assert response.json()["code"] == "INVALID_PARAMETER"
+    assert response.json()["detail"].startswith("min_lead_minutes: ")
     row = await db_session.get(ParameterModel, "min_lead_minutes", populate_existing=True)
     assert row is not None
     assert row.value == str(before)
@@ -97,3 +101,26 @@ async def test_patch_body_forbids_extra_fields(
         headers=await _admin(db_session, client),
     )
     assert response.status_code == 422
+
+
+async def test_update_locks_every_parameter_row(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A true two-session race cannot run inside the rolling-back db_session,
+    so assert the update path issues SELECT ... FOR UPDATE on the table."""
+    headers = await _admin(db_session, client)
+    statements: list[str] = []
+
+    def capture(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    engine = db_session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = await client.patch(
+            f"{URL}/hold_duration_minutes", json={"value": "10"}, headers=headers
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert response.status_code == 200
+    assert any("FROM parameters" in s and "FOR UPDATE" in s for s in statements)

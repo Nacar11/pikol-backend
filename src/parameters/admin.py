@@ -18,18 +18,19 @@ class ParameterAdminService:
     async def update(
         self, session: AsyncSession, caller: UserModel, key: str, value: str
     ) -> ParameterModel:
-        row = await self._repository.get_row(session, key)
+        rows = await self._repository.lock_all(session)
+        row = rows.get(key)
         if row is None:
             raise AppError(404, "NOT_FOUND", "Parameter not found.")
 
         # Validate the WHOLE model with the candidate value, so a cross-field
         # rule (min_lead_minutes >= hold_duration_minutes) is enforced here.
-        candidate = {**await self._repository.load_all(session), key: value}
+        candidate = {**{k: r.value for k, r in rows.items()}, key: value}
         try:
             Parameters.model_validate(candidate)
         except ValidationError as exc:
             first = exc.errors()[0]
-            raise AppError(422, "INVALID_PARAMETER", str(first["msg"])) from exc
+            raise AppError(422, "INVALID_PARAMETER", f"{key}: {first['msg']}") from exc
 
         row.value = value
         row.updated_at = datetime.now(UTC)

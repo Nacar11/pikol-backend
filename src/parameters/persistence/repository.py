@@ -15,3 +15,14 @@ class ParameterRepository:
 
     async def get_row(self, session: AsyncSession, key: str) -> ParameterModel | None:
         return await session.get(ParameterModel, key, populate_existing=True)
+
+    async def lock_all(self, session: AsyncSession) -> dict[str, ParameterModel]:
+        """Every row, locked FOR UPDATE until the transaction ends. A write
+        validates against the whole table, so concurrent edits must serialise."""
+        result = await session.execute(
+            select(ParameterModel)
+            .order_by(ParameterModel.key)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return {row.key: row for row in result.scalars().all()}
