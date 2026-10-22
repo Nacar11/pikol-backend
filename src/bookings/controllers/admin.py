@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.dependencies import require_permission
@@ -40,6 +41,9 @@ async def list_bookings(
     day: date | None = Query(None, alias="date", description="Manila-local day"),
     booking_status: BookingStatus | None = None,
     type: BookingType | None = None,
+    ends_after: AwareDatetime | None = Query(
+        None, description="Only groups with an hour ending after this instant"
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     _: UserModel = Depends(read_any),
@@ -56,6 +60,7 @@ async def list_bookings(
         between=manila_day_bounds(day) if day is not None else None,
         booking_status=booking_status,
         type=type,
+        ends_after=ends_after,
     )
     now = datetime.now(UTC)
     return Page.of(

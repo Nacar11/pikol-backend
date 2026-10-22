@@ -8,7 +8,7 @@ from src.bookings.domain.enums import BookingType
 from src.bookings.persistence.models import BookingGroupModel
 from src.utils.api import API_PREFIX
 from tests.bookings.conftest import ADMIN, BOOKINGS, World, hold, manila_date
-from tests.bookings.helpers import next_hour
+from tests.bookings.helpers import insert_booking, next_hour
 
 CLOSURES = f"{ADMIN}/closures"
 
@@ -175,3 +175,41 @@ async def test_closure_range_limits(client: AsyncClient, world: World) -> None:
     assert now_ok.status_code == 201  # the current hour may be closed
     assert a_month.status_code == 201
     assert a_month.json()[0]["hours"] == 31 * 24
+
+
+async def test_admin_list_ends_after_filters_ended_closures(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    kwargs = {"created_by": world.staff_a_user.id, "type": BookingType.MAINTENANCE}
+    past = await insert_booking(
+        db_session, court_id=world.a.court.id, starts_at=now - timedelta(hours=5), **kwargs
+    )
+    current = await insert_booking(
+        db_session,
+        court_id=world.a.court.id,
+        starts_at=now - timedelta(hours=1),
+        hours=3,
+        **kwargs,
+    )
+    future = await insert_booking(
+        db_session, court_id=world.a.court.id, starts_at=now + timedelta(days=2), **kwargs
+    )
+    other_venue = await insert_booking(
+        db_session, court_id=world.b.court.id, starts_at=now + timedelta(days=2), **kwargs
+    )
+
+    response = await client.get(
+        f"{API_PREFIX}/admin/bookings",
+        headers=world.staff_a,
+        params={"type": "MAINTENANCE", "ends_after": datetime.now(UTC).isoformat()},
+    )
+    unfiltered = await client.get(
+        f"{API_PREFIX}/admin/bookings", headers=world.staff_a, params={"type": "MAINTENANCE"}
+    )
+
+    ids = [b["id"] for b in response.json()["data"]]
+    assert response.status_code == 200
+    assert ids == [current.id, future.id]
+    assert past.id in [b["id"] for b in unfiltered.json()["data"]]
+    assert other_venue.id not in ids

@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import ColumnElement, and_, exists, func, not_, select, update
@@ -265,6 +265,7 @@ class BookingRepository:
         booking_status: BookingStatus | None = None,
         type: BookingType | None = None,
         needs_resolution: bool | None = None,
+        ends_after: datetime | None = None,
     ) -> tuple[list[BookingGroupModel], int]:
         filters: list[Any] = [scope.where(CourtModel.venue_id)]
         if needs_resolution is not None:
@@ -286,6 +287,15 @@ class BookingRepository:
                     BookingSlotModel.booking_group_id == BookingGroupModel.id,
                     BookingSlotModel.starts_at >= start,
                     BookingSlotModel.starts_at < end,
+                )
+            )
+        if ends_after is not None:
+            # A slot is one hour: it ends after `ends_after` when it starts
+            # after `ends_after - 1h`. Keeps current and upcoming groups.
+            filters.append(
+                exists().where(
+                    BookingSlotModel.booking_group_id == BookingGroupModel.id,
+                    BookingSlotModel.starts_at > ends_after - timedelta(hours=1),
                 )
             )
         base = select(BookingGroupModel).join(
