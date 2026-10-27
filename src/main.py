@@ -17,6 +17,7 @@ from src.payments.controllers.mock_maya import router as mock_maya_router
 from src.payments.controllers.webhooks import router as webhooks_router
 from src.pricing.controllers.admin import router as admin_pricing_router
 from src.users.controllers.admin import router as admin_users_router
+from src.users.controllers.groups import permissions_router as admin_permissions_router
 from src.users.controllers.groups import router as admin_groups_router
 from src.users.controllers.me import router as me_router
 from src.utils.errors import register_exception_handlers
@@ -66,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(me_router)
     app.include_router(admin_users_router)
     app.include_router(admin_groups_router)
+    app.include_router(admin_permissions_router)
     app.include_router(catalog_router)
     app.include_router(admin_venues_router)
     app.include_router(admin_courts_router)

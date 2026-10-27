@@ -135,3 +135,20 @@ class GroupUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=64)
+
+
+class GroupPermissionsUpdate(BaseModel):
+    """The whole checkbox state. Codes the caller does not hold are kept on
+    the group as they were, whatever this list says (ADR 0003)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    codes: list[str] = Field(max_length=100)
+
+
+class PermissionOut(BaseModel):
+    code: str
+    resource: str
+    action: str
+    description: str | None
+    owner_only: bool

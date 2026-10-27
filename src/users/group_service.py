@@ -4,9 +4,11 @@ lives here, in one place, each pinned by a test that fails when it goes."""
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth.access import VenueAccess
 from src.auth.scope import VenueScope
-from src.users.domain.groups import GroupKind
-from src.users.dto import GroupCreate, GroupOut, GroupUpdate
+from src.users.domain.groups import OWNER_ONLY, GroupKind
+from src.users.domain.roles import PERMISSIONS
+from src.users.dto import GroupCreate, GroupOut, GroupPermissionsUpdate, GroupUpdate
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupModel, UserModel
 from src.utils.errors import AppError
@@ -125,6 +127,68 @@ class GroupService:
             )
         await session.delete(group)
         await session.commit()
+
+    async def set_permissions(
+        self,
+        session: AsyncSession,
+        caller: UserModel,
+        group_id: int,
+        body: GroupPermissionsUpdate,
+        *,
+        access: VenueAccess,
+    ) -> UserGroupModel:
+        group = await self.editable(session, caller, group_id, scope=access.scope)
+        requested = frozenset(body.codes)
+        if unknown := requested - frozenset(PERMISSIONS):
+            raise AppError(
+                422, "UNKNOWN_PERMISSION", f"Unknown permission: {', '.join(sorted(unknown))}."
+            )
+        if requested & OWNER_ONLY:
+            # Never grantable, by anyone — the owner holds these through
+            # system_admin, not through any group.
+            raise AppError(
+                422, "OWNER_ONLY_PERMISSION", "Venues and parameters stay with the owner."
+            )
+        if group.kind == GroupKind.CUSTOMER and requested:
+            raise AppError(
+                422, "CUSTOMER_HAS_NO_PERMISSIONS", "Customers book as themselves, not with codes."
+            )
+        current = (await group_repository.codes_by_group(session, [group.id]))[group.id]
+        if caller.system_admin:
+            final = requested
+        else:
+            held = access.permissions
+            if granted := (requested - current) - held:
+                raise AppError(
+                    403,
+                    "FORBIDDEN",
+                    f"You can only grant permissions you hold: {', '.join(sorted(granted))}.",
+                )
+            # Touch only what the caller holds; leave the rest as it was.
+            final = (requested & held) | (current - held)
+            if "USER:Manage" in current - final:
+                await self._refuse_self_lockout(session, caller, group, access)
+        await group_repository.set_codes(session, group.id, final)
+        group.updated_by_user_id = caller.id
+        await session.commit()
+        await session.refresh(group)
+        return group
+
+    async def _refuse_self_lockout(
+        self, session: AsyncSession, caller: UserModel, group: UserGroupModel, access: VenueAccess
+    ) -> None:
+        """Nobody removes their own last way to manage groups at a venue."""
+        if not await group_repository.is_member(session, group.id, caller.id):
+            return
+        others = await group_repository.staff_codes(
+            session, caller.id, venue_id=access.scope.venue_id, excluding_group=group.id
+        )
+        if "USER:Manage" not in others:
+            raise AppError(
+                409,
+                "SELF_LOCKOUT",
+                "That would remove your own access to manage groups here.",
+            )
 
     async def _save(self, session: AsyncSession, group: UserGroupModel) -> None:
         """The unique index is the name check — no SELECT-then-INSERT race."""

@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import case, func, insert, literal, or_, select
+from sqlalchemy import case, delete, func, insert, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.domain.groups import (
@@ -94,7 +94,12 @@ class GroupRepository:
         return [(venue_id, kind, name) for venue_id, kind, name in rows if venue_id is not None]
 
     async def staff_codes(
-        self, session: AsyncSession, user_id: int, *, venue_id: int | None
+        self,
+        session: AsyncSession,
+        user_id: int,
+        *,
+        venue_id: int | None,
+        excluding_group: int | None = None,
     ) -> frozenset[str]:
         """The union of the user's staff groups' codes — at ONE venue when
         `venue_id` is given (what the server authorises on), or across all of
@@ -114,6 +119,8 @@ class GroupRepository:
         )
         if venue_id is not None:
             query = query.where(UserGroupModel.venue_id == venue_id)
+        if excluding_group is not None:
+            query = query.where(UserGroupModel.id != excluding_group)
         return frozenset((await session.execute(query)).scalars())
 
     # The reads below touch venue-owned groups, so `scope` is keyword-only
@@ -232,6 +239,35 @@ class GroupRepository:
             )
         )
         return result.first() is not None
+
+    async def is_member(self, session: AsyncSession, group_id: int, user_id: int) -> bool:
+        result = await session.execute(
+            select(UserGroupMemberModel.user_id).where(
+                UserGroupMemberModel.group_id == group_id, UserGroupMemberModel.user_id == user_id
+            )
+        )
+        return result.first() is not None
+
+    async def set_codes(self, session: AsyncSession, group_id: int, codes: frozenset[str]) -> None:
+        """Replace the group's permissions with exactly `codes`."""
+        await session.execute(
+            delete(user_group_permissions).where(user_group_permissions.c.group_id == group_id)
+        )
+        if codes:
+            await session.execute(
+                insert(user_group_permissions).from_select(
+                    ["group_id", "permission_id"],
+                    select(literal(group_id), PermissionModel.id).where(
+                        PermissionModel.code.in_(codes)
+                    ),
+                )
+            )
+
+    async def all_permissions(self, session: AsyncSession) -> list[PermissionModel]:
+        rows = await session.execute(
+            select(PermissionModel).order_by(PermissionModel.resource, PermissionModel.id)
+        )
+        return list(rows.scalars())
 
     async def add_member(
         self, session: AsyncSession, group_id: int, user_id: int, *, added_by: int | None
