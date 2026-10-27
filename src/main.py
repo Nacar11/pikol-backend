@@ -11,6 +11,7 @@ from src.bookings.http_errors import register_booking_errors
 from src.checkouts.controllers.customer import router as checkouts_router
 from src.config.settings import Settings, get_settings
 from src.courts.controllers.admin import router as admin_courts_router
+from src.favorites.controllers.me import router as favorites_router
 from src.health.controllers.health import router as health_router
 from src.parameters.controllers.admin import router as admin_parameters_router
 from src.payments.controllers.mock_maya import router as mock_maya_router
@@ -66,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(me_router)
+    app.include_router(favorites_router)
     app.include_router(admin_users_router)
     app.include_router(admin_groups_router)
     app.include_router(admin_permissions_router)

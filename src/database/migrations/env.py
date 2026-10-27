@@ -15,6 +15,7 @@ import src.auth.persistence.models  # noqa: F401
 import src.bookings.persistence.models  # noqa: F401
 import src.checkouts.persistence.models  # noqa: F401
 import src.courts.persistence.models  # noqa: F401
+import src.favorites.persistence.models  # noqa: F401
 import src.parameters.persistence.models  # noqa: F401
 import src.payments.persistence.models  # noqa: F401
 import src.pricing.persistence.models  # noqa: F401

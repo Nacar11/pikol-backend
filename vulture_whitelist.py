@@ -116,3 +116,6 @@ provider_reference  # unused variable (src/checkouts/persistence/models.py)
 # Still a tunable parameter; nothing reads it since customers stopped
 # cancelling confirmed bookings (ADR 0004 decision 6).
 cancellation_cutoff_minutes  # unused variable (src/parameters/domain/parameters.py)
+my_favorites  # unused function (src/favorites/controllers/me.py)
+add_favorite  # unused function (src/favorites/controllers/me.py)
+remove_favorite  # unused function (src/favorites/controllers/me.py)
