@@ -7,18 +7,22 @@ from src.bookings.domain.errors import BookingError
 from src.bookings.domain.rules import check_player_window, slot_starts
 from src.bookings.persistence.repository import booking_repository
 from src.bookings.service import CATALOG, booking_service
-from src.checkouts.domain.rules import CheckoutItem, allocate_fee, check_items
+from src.checkouts.domain.rules import CheckoutItem, allocate_fee, check_items, is_live
 from src.checkouts.dto import CheckoutCreate, CheckoutOut
 from src.checkouts.persistence.models import CheckoutModel
 from src.checkouts.persistence.repository import checkout_repository
 from src.courts.persistence.models import CourtModel
 from src.parameters.service import parameter_service
 from src.payments.domain.enums import PaymentOutcome
+from src.payments.domain.port import PaymentProvider
 from src.payments.persistence.repository import payment_repository
+from src.payments.service import payment_service
 from src.pricing.domain.pricing import convenience_fee_centavos
 from src.users.persistence.models import UserModel
 from src.utils.errors import AppError
 from src.utils.time import MANILA
+
+CUSTOMER_CANCEL_REASON = "Cancelled by customer"
 
 
 def checkout_not_found() -> AppError:
@@ -156,6 +160,59 @@ class CheckoutService:
         if checkout is None:
             raise checkout_not_found()  # someone else's looks exactly like none
         return checkout
+
+    async def pay(
+        self,
+        session: AsyncSession,
+        customer: UserModel,
+        checkout_id: int,
+        provider: PaymentProvider,
+    ) -> CheckoutModel:
+        """Continue to Maya — only while the hold is live."""
+        checkout = await self.get_mine(session, customer, checkout_id)
+        if not is_live(checkout.status, checkout.expires_at, datetime.now(UTC)):
+            raise await self._hold_ended(session)
+        await payment_service.start_checkout(session, checkout, provider)
+        return checkout
+
+    async def cancel(
+        self, session: AsyncSession, customer: UserModel, checkout_id: int
+    ) -> CheckoutModel:
+        """ "Cancel and release hours": every hour reopens at once. Only a
+        live hold; a paid booking is final (ADR 0004 decision 6)."""
+        now = datetime.now(UTC)
+        checkout = await self.get_mine(session, customer, checkout_id)
+        checkout = await checkout_repository.get_for_update(session, checkout.id)
+        if checkout.status == PaymentOutcome.SUCCESSFUL:
+            raise AppError(409, "PAID_IS_FINAL", "Paid bookings are final.")
+        if not is_live(checkout.status, checkout.expires_at, now):
+            raise await self._hold_ended(session)
+        await checkout_repository.set_status(session, checkout, PaymentOutcome.CANCELLED)
+        for group in checkout.bookings:
+            await booking_repository.set_status(
+                session,
+                group,
+                BookingStatus.CANCELLED,
+                cancelled_at=now,
+                cancelled_by_user_id=customer.id,
+                cancellation_reason=CUSTOMER_CANCEL_REASON,
+            )
+        payment = await payment_repository.latest_for_checkout(session, checkout.id)
+        if payment is not None and payment.status == PaymentOutcome.PENDING:
+            # Maya's page may stay open; a payment made there still lands
+            # through sync_payment's late path, never silently.
+            payment.status = PaymentOutcome.CANCELLED
+        await session.commit()
+        return checkout
+
+    @staticmethod
+    async def _hold_ended(session: AsyncSession) -> AppError:
+        minutes = (await parameter_service.get(session)).hold_duration_minutes
+        return AppError(
+            409,
+            "HOLD_ENDED",
+            f"Your {minutes}-minute hold has ended. Pick your hours again.",
+        )
 
     async def out(self, session: AsyncSession, checkout: CheckoutModel) -> CheckoutOut:
         payment = await payment_repository.latest_for_checkout(session, checkout.id)

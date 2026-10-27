@@ -10,6 +10,7 @@ from src.bookings.domain.rules import slot_starts
 from src.bookings.persistence.models import SLOT_CONSTRAINT, BookingGroupModel
 from src.bookings.persistence.repository import booking_repository
 from src.bookings.service_support import snapshot
+from src.checkouts.persistence.models import CheckoutModel
 from src.config.settings import get_settings
 from src.email.port import EmailSender, send_quietly
 from src.email.templates import receipt_email
@@ -32,41 +33,43 @@ def provider_unavailable() -> AppError:
     return AppError(
         502,
         "PAYMENT_PROVIDER_UNAVAILABLE",
-        "We could not reach the payment provider. Your slot is held — try paying again.",
+        "We could not reach the payment provider. Your hours are still held — try again.",
     )
 
 
 class PaymentService:
     async def start_checkout(
-        self, session: AsyncSession, group: BookingGroupModel, provider: PaymentProvider
+        self, session: AsyncSession, checkout: CheckoutModel, provider: PaymentProvider
     ) -> str:
-        """Open a checkout for a hold that is ALREADY COMMITTED.
+        """Open Maya for a checkout whose hold is ALREADY COMMITTED, once.
 
-        The provider call sits outside the booking transaction on purpose:
-        holding one open across a network round-trip is how connection pools
-        die (spec §5.3). If it fails, the hold stands and expires on its own.
+        A second call returns the first session's URL: Maya cannot close a
+        session early, so a second one could also be paid. The provider call
+        sits outside the hold's transaction on purpose — holding one open
+        across a network round-trip is how connection pools die.
         """
+        existing = await payment_repository.latest_for_checkout(session, checkout.id)
+        if existing is not None:
+            return existing.checkout_url
         try:
-            checkout = await provider.create_checkout(
-                amount_centavos=group.total_centavos,
-                reference=group.reference_code,
-                description=f"Pikol court booking {group.reference_code}",
-                return_url=(
-                    f"{get_settings().frontend_base_url}/checkout/return?booking_id={group.id}"
-                ),
+            opened = await provider.create_checkout(
+                amount_centavos=checkout.total_centavos,
+                reference=checkout.reference_code,
+                description=f"Pikol court booking {checkout.reference_code}",
+                return_url=f"{get_settings().frontend_base_url}/book/result/{checkout.id}",
             )
         except ProviderError:
-            logger.warning("checkout creation failed: booking=%s", group.reference_code)
+            logger.warning("checkout creation failed: checkout=%s", checkout.reference_code)
             raise provider_unavailable() from None
         await payment_repository.add_checkout(
             session,
-            booking_group_id=group.id,
+            checkout_id=checkout.id,
             provider=provider.name,
-            checkout=checkout,
-            amount_centavos=group.total_centavos,
+            checkout=opened,
+            amount_centavos=checkout.total_centavos,
         )
         await session.commit()
-        return checkout.checkout_url
+        return opened.checkout_url
 
     async def sync_payment(
         self,

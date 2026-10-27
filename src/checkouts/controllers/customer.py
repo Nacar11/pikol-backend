@@ -6,6 +6,8 @@ from src.checkouts.dto import CheckoutCreate, CheckoutOut
 from src.checkouts.persistence.repository import checkout_repository
 from src.checkouts.service import checkout_service
 from src.database.session import get_session
+from src.payments.domain.port import PaymentProvider
+from src.payments.provider import get_payment_provider
 from src.users.persistence.models import UserModel
 from src.utils.api import API_PREFIX
 from src.utils.pagination import Page
@@ -48,4 +50,28 @@ async def my_checkout(
 ) -> CheckoutOut:
     """The hold page and the result page read this."""
     checkout = await checkout_service.get_mine(session, customer, checkout_id)
+    return await checkout_service.out(session, checkout)
+
+
+@router.post("/{checkout_id}/pay")
+async def pay(
+    checkout_id: int,
+    customer: UserModel = Depends(require_customer),
+    session: AsyncSession = Depends(get_session),
+    provider: PaymentProvider = Depends(get_payment_provider),
+) -> CheckoutOut:
+    """Continue to Maya. Opens Maya's session once; a repeat returns the same
+    URL. The redirect back confirms nothing — the webhook does."""
+    checkout = await checkout_service.pay(session, customer, checkout_id, provider)
+    return await checkout_service.out(session, checkout)
+
+
+@router.post("/{checkout_id}/cancel")
+async def cancel(
+    checkout_id: int,
+    customer: UserModel = Depends(require_customer),
+    session: AsyncSession = Depends(get_session),
+) -> CheckoutOut:
+    """Cancel and release hours, while the hold is live. Paid is final."""
+    checkout = await checkout_service.cancel(session, customer, checkout_id)
     return await checkout_service.out(session, checkout)
