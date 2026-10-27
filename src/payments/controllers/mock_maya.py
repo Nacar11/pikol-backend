@@ -50,7 +50,12 @@ async def hosted_page(
     base = f"{API_PREFIX}/mock-maya/checkouts/{html.escape(checkout_id)}"
     buttons = "".join(
         f'<form method="post" action="{base}/{outcome}"><button>{label}</button></form>'
-        for outcome, label in (("success", "Pay"), ("failure", "Fail"), ("cancel", "Cancel"))
+        for outcome, label in (
+            ("success", "Pay"),
+            ("failure", "Decline"),
+            ("cancel", "Back out"),
+            ("expire", "Expire"),
+        )
     )
     return HTMLResponse(
         "<!doctype html><meta charset=utf-8><title>Mock Maya checkout</title>"

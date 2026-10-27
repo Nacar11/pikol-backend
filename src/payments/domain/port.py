@@ -6,6 +6,7 @@ provider directly and is the only source of status, amount, and reference.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from src.payments.domain.enums import PaymentOutcome, PaymentProviderName
@@ -34,8 +35,10 @@ class WebhookNotice:
 class ProviderPayment:
     payment_id: str
     status: PaymentOutcome
+    provider_status: str  # Maya's own wording, e.g. PAYMENT_EXPIRED
     amount_centavos: int
     reference: str
+    paid_at: datetime | None  # decides void (same Manila day) or refund
     raw: dict[str, Any]  # PII — stored, never logged
 
 
@@ -49,3 +52,13 @@ class PaymentProvider(Protocol):
     def parse_webhook(self, payload: bytes) -> WebhookNotice: ...
 
     async def fetch_payment(self, payment_id: str) -> ProviderPayment: ...
+
+    async def void(self, payment_id: str) -> str:
+        """Undo a payment in full on its own Manila day. Returns the
+        provider's reference; raises ProviderError when it cannot."""
+        ...
+
+    async def refund(self, payment_id: str, amount_centavos: int) -> str:
+        """Undo a payment from the next day on. Returns the provider's
+        reference; raises ProviderError when it cannot."""
+        ...

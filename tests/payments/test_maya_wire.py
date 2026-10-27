@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -10,7 +11,7 @@ from src.payments.adapters.maya_wire import (
     parse_payment,
     to_pesos,
 )
-from src.payments.domain.enums import ProviderPaymentStatus
+from src.payments.domain.enums import PaymentOutcome
 from src.payments.domain.port import ProviderError
 
 
@@ -39,17 +40,45 @@ def test_float_amount_rejected() -> None:
 @pytest.mark.parametrize(
     ("maya", "ours"),
     [
-        ("PAYMENT_SUCCESS", ProviderPaymentStatus.PAID),
-        ("PAYMENT_FAILED", ProviderPaymentStatus.FAILED),
-        ("PAYMENT_EXPIRED", ProviderPaymentStatus.EXPIRED),
-        ("PAYMENT_CANCELLED", ProviderPaymentStatus.CANCELLED),
-        ("PENDING_TOKEN", ProviderPaymentStatus.PENDING),
-        ("SOMETHING_NEW", ProviderPaymentStatus.PENDING),
+        # ADR 0004's table, row by row.
+        ("PENDING_TOKEN", PaymentOutcome.PENDING),
+        ("PENDING_PAYMENT", PaymentOutcome.PENDING),
+        ("FOR_AUTHENTICATION", PaymentOutcome.PENDING),
+        ("AUTHENTICATING", PaymentOutcome.PENDING),
+        ("AUTH_SUCCESS", PaymentOutcome.PENDING),
+        ("PAYMENT_PROCESSING", PaymentOutcome.PENDING),
+        ("PAYMENT_SUCCESS", PaymentOutcome.SUCCESSFUL),
+        ("PAYMENT_FAILED", PaymentOutcome.FAILED),
+        ("AUTH_FAILED", PaymentOutcome.FAILED),
+        ("PAYMENT_CANCELLED", PaymentOutcome.CANCELLED),
+        ("PAYMENT_EXPIRED", PaymentOutcome.CANCELLED),
+        ("VOIDED", PaymentOutcome.REFUNDED),
+        ("REFUNDED", PaymentOutcome.REFUNDED),
     ],
 )
-def test_status_mapping(maya: str, ours: ProviderPaymentStatus) -> None:
+def test_every_adr_maya_status_maps(maya: str, ours: PaymentOutcome) -> None:
     raw = {"id": "p1", "status": maya, "amount": "1.00", "requestReferenceNumber": "PKL-AAAAA"}
-    assert parse_payment(raw).status == ours
+    payment = parse_payment(raw)
+    assert payment.status == ours
+    assert payment.provider_status == maya
+
+
+def test_unknown_status_stays_pending() -> None:
+    raw = {"id": "p1", "status": "SOMETHING_NEW", "amount": "1", "requestReferenceNumber": "R"}
+    payment = parse_payment(raw)
+    assert (payment.status, payment.provider_status) == (PaymentOutcome.PENDING, "SOMETHING_NEW")
+
+
+def test_payment_at_is_parsed() -> None:
+    raw = {
+        "id": "p1",
+        "status": "PAYMENT_SUCCESS",
+        "amount": "1",
+        "requestReferenceNumber": "R",
+        "paymentAt": "2026-10-28T15:59:00.000Z",
+    }
+    assert parse_payment(raw).paid_at == datetime(2026, 10, 28, 15, 59, tzinfo=UTC)
+    assert parse_payment({k: v for k, v in raw.items() if k != "paymentAt"}).paid_at is None
 
 
 def test_parse_payment_reads_both_amount_shapes() -> None:

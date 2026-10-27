@@ -7,22 +7,36 @@ confirm them against sandbox responses.
 """
 
 import json
+import logging
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.payments.domain.enums import PaymentOutcome
 from src.payments.domain.port import ProviderError, ProviderPayment, WebhookNotice
 
+logger = logging.getLogger("pikol.payments")
+
 CURRENCY = "PHP"
 CENTAVO = Decimal("0.01")
 
+# ADR 0004's table. Anything else stays PENDING: logged and re-checked later.
 MAYA_STATUSES = {
-    "PAYMENT_SUCCESS": PaymentOutcome.SUCCESSFUL,
-    "PAYMENT_FAILED": PaymentOutcome.FAILED,
-    "PAYMENT_EXPIRED": PaymentOutcome.CANCELLED,
-    "PAYMENT_CANCELLED": PaymentOutcome.CANCELLED,
     "PENDING_TOKEN": PaymentOutcome.PENDING,
     "PENDING_PAYMENT": PaymentOutcome.PENDING,
+    "FOR_AUTHENTICATION": PaymentOutcome.PENDING,
+    "AUTHENTICATING": PaymentOutcome.PENDING,
+    "AUTH_SUCCESS": PaymentOutcome.PENDING,
+    "PAYMENT_PROCESSING": PaymentOutcome.PENDING,
+    "PAYMENT_SUCCESS": PaymentOutcome.SUCCESSFUL,
+    "PAYMENT_FAILED": PaymentOutcome.FAILED,
+    "AUTH_FAILED": PaymentOutcome.FAILED,
+    # Maya's expiry arrives at minute 60; our hold cancelled it at minute 5.
+    "PAYMENT_CANCELLED": PaymentOutcome.CANCELLED,
+    "PAYMENT_EXPIRED": PaymentOutcome.CANCELLED,
+    # Confirms a void or refund we asked for.
+    "VOIDED": PaymentOutcome.REFUNDED,
+    "REFUNDED": PaymentOutcome.REFUNDED,
 }
 
 
@@ -71,7 +85,8 @@ def parse_payment(raw: dict[str, Any]) -> ProviderPayment:
         else:
             amount, currency = raw["amount"], raw.get("currency", CURRENCY)
         reference = str(raw["requestReferenceNumber"])
-    except (KeyError, TypeError) as exc:
+        paid_at = datetime.fromisoformat(raw["paymentAt"]) if raw.get("paymentAt") else None
+    except (KeyError, TypeError, ValueError) as exc:
         raise ProviderError(f"unexpected payment shape: missing {exc}") from None
     if currency != CURRENCY:
         raise ProviderError(f"unexpected currency {currency!r}")
@@ -79,11 +94,16 @@ def parse_payment(raw: dict[str, Any]) -> ProviderPayment:
         amount_centavos = from_pesos(amount)
     except (TypeError, ValueError) as exc:
         raise ProviderError(str(exc)) from None
+    status = MAYA_STATUSES.get(maya_status)
+    if status is None:
+        logger.warning("unknown Maya status %s for payment %s", maya_status, payment_id)
     return ProviderPayment(
         payment_id=payment_id,
-        status=MAYA_STATUSES.get(maya_status, PaymentOutcome.PENDING),
+        status=status or PaymentOutcome.PENDING,
+        provider_status=maya_status,
         amount_centavos=amount_centavos,
         reference=reference,
+        paid_at=paid_at,
         raw=raw,
     )
 
