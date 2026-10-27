@@ -10,12 +10,11 @@ from src.auth.service import auth_service, insert_user
 from src.parameters.service import parameter_service
 from src.users.domain.groups import GroupKind
 from src.users.domain.roles import RoleCode
-from src.users.dto import AdminUserUpdate, PasswordChangeRequest, ProfileUpdate
+from src.users.dto import AdminUserUpdate, PasswordChangeRequest, ProfileUpdate, UserOut
 from src.users.persistence.group_repository import group_repository
-from src.users.persistence.models import UserModel
+from src.users.persistence.models import UserGroupModel, UserModel
 from src.users.persistence.repository import user_repository
 from src.utils.errors import AppError
-from src.venues.persistence.models import VenueModel
 
 
 def not_found() -> AppError:
@@ -64,45 +63,68 @@ class UserService:
         )
         return Invitation(user, token, days)
 
+    async def invitable_group(
+        self, session: AsyncSession, caller: UserModel, group_id: int, *, scope: VenueScope
+    ) -> UserGroupModel:
+        """The group an invite may target. A group the caller cannot see is
+        the same 422 as one that does not exist; a master group is the
+        owner's alone; Customer is not a staff invitation at all."""
+        group = await group_repository.get_scoped(session, group_id, scope=scope)
+        if group is None:
+            raise AppError(422, "UNKNOWN_GROUP", "That group does not exist.")
+        if group.kind == GroupKind.CUSTOMER:
+            raise AppError(422, "NOT_A_STAFF_GROUP", "Invitations are for staff groups.")
+        if group.kind == GroupKind.MASTER and not caller.system_admin:
+            raise AppError(403, "FORBIDDEN", "Only the owner can add venue masters.")
+        return group
+
     async def invite(
         self,
         session: AsyncSession,
+        caller: UserModel,
         *,
         email: str,
         first_name: str,
         last_name: str,
         mobile: str | None,
-        role: RoleCode,
-        venue_id: int,
+        group: UserGroupModel,
     ) -> Invitation:
-        """Create a staff account with NO password and email an invitation.
+        """Create a staff account with NO password, in `group`, and email an
+        invitation. `group` comes from invitable_group; nothing here reads a
+        venue from the request.
 
-        role and venue_id are trusted here; the CONTROLLER decides where they
-        come from — the manager route fixes both from the token.
+        An existing account is refused rather than joined: adding people who
+        already have one is the members API, which never reveals more than
+        an exact email match.
         """
-        if await session.get(VenueModel, venue_id) is None:
-            raise AppError(422, "UNKNOWN_VENUE", "That venue does not exist.")
-        user = await insert_user(
-            session,
-            UserModel(
-                email=email,
-                password_hash=None,
-                first_name=first_name,
-                last_name=last_name,
-                mobile=mobile,
-                role_id=await user_repository.role_id(session, role),
-                venue_id=venue_id,
-                is_active=False,
-            ),
-        )
-        # Mirror the role into its group until 0007 retires roles (ADR 0003).
-        kind = GroupKind.MASTER if role == RoleCode.VENUE_MANAGER else GroupKind.STAFF
-        await group_repository.add_member(
-            session,
-            await group_repository.venue_group_id(session, venue_id, kind),
-            user.id,
-            added_by=None,
-        )
+        assert group.venue_id is not None  # invitable_group excludes Customer
+        try:
+            user = await insert_user(
+                session,
+                UserModel(
+                    email=email,
+                    password_hash=None,
+                    first_name=first_name,
+                    last_name=last_name,
+                    mobile=mobile,
+                    # The retired columns, still NOT NULL until migration 0007.
+                    role_id=await user_repository.role_id(
+                        session,
+                        RoleCode.VENUE_MANAGER
+                        if group.kind == GroupKind.MASTER
+                        else RoleCode.VENUE_STAFF,
+                    ),
+                    venue_id=group.venue_id,
+                    is_active=False,
+                ),
+            )
+        except AppError as exc:
+            if exc.code != "EMAIL_TAKEN":
+                raise
+            raise AppError(
+                409, "EMAIL_EXISTS", "Already registered — add them from Venue staff."
+            ) from None
+        await group_repository.add_member(session, group.id, user.id, added_by=caller.id)
         invitation = await self._issue_invitation(session, user)
         await session.commit()
         return invitation
@@ -125,10 +147,31 @@ class UserService:
             # Your own account goes through /users/me; this route could
             # otherwise deactivate the last manager of a venue by accident.
             raise AppError(403, "FORBIDDEN", "Use your own profile settings for your account.")
-        if not caller.system_admin and target.role.code != RoleCode.VENUE_STAFF:
-            # A manager's USER:Manage covers VENUE_STAFF only (spec §6.3).
-            raise AppError(403, "FORBIDDEN", "You may only manage staff accounts.")
+        if caller.system_admin:
+            return target
+        # Not the owner: scope is exactly one venue (get_venue_access).
+        assert scope.venue_id is not None
+        if await group_repository.is_master_at(session, target.id, scope.venue_id):
+            raise AppError(403, "FORBIDDEN", "Only the owner can change a venue master.")
+        if await group_repository.belongs_elsewhere(session, target.id, scope.venue_id):
+            # Their account is not one venue's to change; leaving your groups is.
+            raise AppError(
+                403,
+                "FORBIDDEN",
+                "This person is also a customer or works at another venue. "
+                "Remove them from your groups instead.",
+            )
         return target
+
+    async def out(self, session: AsyncSession, user: UserModel, *, scope: VenueScope) -> UserOut:
+        groups = await group_repository.groups_for(session, [user.id], scope=scope)
+        return UserOut.of(user, groups[user.id])
+
+    async def out_many(
+        self, session: AsyncSession, users: list[UserModel], *, scope: VenueScope
+    ) -> list[UserOut]:
+        groups = await group_repository.groups_for(session, [u.id for u in users], scope=scope)
+        return [UserOut.of(u, groups[u.id]) for u in users]
 
     async def update_by_admin(
         self,

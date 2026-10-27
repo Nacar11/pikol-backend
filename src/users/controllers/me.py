@@ -4,10 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.access import get_venue_access
 from src.auth.dependencies import get_current_user
+from src.auth.scope import VenueScope
 from src.database.session import get_session
 from src.users.domain.groups import GroupKind
 from src.users.domain.roles import PERMISSIONS
-from src.users.dto import MeOut, MyVenueOut, PasswordChangeRequest, ProfileUpdate, UserOut
+from src.users.dto import MeOut, MyVenueOut, PasswordChangeRequest, ProfileUpdate
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserModel
 from src.users.service import user_service
@@ -20,9 +21,10 @@ router = APIRouter(prefix=f"{API_PREFIX}/users/me", tags=["me"])
 
 
 async def _me(session: AsyncSession, user: UserModel) -> MeOut:
+    # Your own account: every one of your groups, at every venue.
+    out = await user_service.out(session, user, scope=VenueScope.everything())
     return MeOut(
-        **UserOut.of(user).model_dump(),
-        is_customer=await group_repository.is_customer(session, user.id),
+        **out.model_dump(), is_customer=await group_repository.is_customer(session, user.id)
     )
 
 

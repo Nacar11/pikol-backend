@@ -2,12 +2,11 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.access import get_venue_scope, require_permission
-from src.auth.dependencies import forbidden, require_super_admin
+from src.auth.dependencies import require_super_admin
 from src.auth.scope import VenueScope
 from src.database.session import get_session
 from src.email.port import EmailSender, get_email_sender, send_quietly
 from src.email.templates import invitation_email
-from src.users.domain.roles import RoleCode
 from src.users.dto import AdminInviteRequest, AdminUserUpdate, StaffInviteRequest, UserOut
 from src.users.persistence.models import UserModel
 from src.users.persistence.repository import user_repository
@@ -31,59 +30,68 @@ async def _send_invitation(sender: EmailSender, invitation: Invitation) -> None:
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 async def invite_any(
     body: AdminInviteRequest,
-    _: UserModel = Depends(require_super_admin),
+    caller: UserModel = Depends(require_super_admin),
     session: AsyncSession = Depends(get_session),
     sender: EmailSender = Depends(get_email_sender),
 ) -> UserOut:
-    """SUPER_ADMIN only: role and venue are parameters here because an
-    admin choosing them is the legitimate case (spec §6.4)."""
+    """SUPER_ADMIN only: any staff or master group at any venue (ADR 0003)."""
+    everywhere = VenueScope.everything()
+    group = await user_service.invitable_group(session, caller, body.group_id, scope=everywhere)
     invitation = await user_service.invite(
         session,
+        caller,
         email=body.email,
         first_name=body.first_name,
         last_name=body.last_name,
         mobile=body.mobile,
-        role=body.role,
-        venue_id=body.venue_id,
+        group=group,
     )
     await _send_invitation(sender, invitation)
-    return UserOut.of(invitation.user)
+    return await user_service.out(session, invitation.user, scope=everywhere)
 
 
 @router.post("/venue-staff", status_code=status.HTTP_201_CREATED)
 async def invite_staff(
     body: StaffInviteRequest,
     caller: UserModel = Depends(manage_users),
+    scope: VenueScope = Depends(get_venue_scope),
     session: AsyncSession = Depends(get_session),
     sender: EmailSender = Depends(get_email_sender),
 ) -> UserOut:
-    """A manager inviting staff to THEIR OWN venue. Both privilege fields
-    come from the server, never the body (spec §6.4)."""
-    if caller.venue_id is None:
-        raise forbidden()
+    """Invite into a staff group at the ACTIVE venue. The venue is the
+    group's, and the group must be one this caller can see — a group at
+    another venue is the same 422 as a missing one (ADR 0003)."""
+    group = await user_service.invitable_group(session, caller, body.group_id, scope=scope)
     invitation = await user_service.invite(
         session,
+        caller,
         email=body.email,
         first_name=body.first_name,
         last_name=body.last_name,
         mobile=body.mobile,
-        role=RoleCode.VENUE_STAFF,  # fixed by the endpoint
-        venue_id=caller.venue_id,  # from the token
+        group=group,
     )
     await _send_invitation(sender, invitation)
-    return UserOut.of(invitation.user)
+    return await user_service.out(session, invitation.user, scope=scope)
 
 
 @router.get("/users")
 async def list_users(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    q: str | None = Query(None, max_length=100, description="Name or email contains"),
     _: UserModel = Depends(manage_users),
     scope: VenueScope = Depends(get_venue_scope),
     session: AsyncSession = Depends(get_session),
 ) -> Page[UserOut]:
-    users, total = await user_repository.list(session, scope=scope, page=page, limit=limit)
-    return Page.of([UserOut.of(u) for u in users], total=total, page=page, limit=limit)
+    """People holding a group at the active venue; everyone, for the owner."""
+    users, total = await user_repository.list(session, scope=scope, page=page, limit=limit, q=q)
+    return Page.of(
+        await user_service.out_many(session, users, scope=scope),
+        total=total,
+        page=page,
+        limit=limit,
+    )
 
 
 @router.get("/users/{user_id}")
@@ -93,7 +101,8 @@ async def get_user(
     scope: VenueScope = Depends(get_venue_scope),
     session: AsyncSession = Depends(get_session),
 ) -> UserOut:
-    return UserOut.of(await user_service.get_for_admin(session, user_id, scope=scope))
+    user = await user_service.get_for_admin(session, user_id, scope=scope)
+    return await user_service.out(session, user, scope=scope)
 
 
 @router.patch("/users/{user_id}")
@@ -105,7 +114,7 @@ async def update_user(
     session: AsyncSession = Depends(get_session),
 ) -> UserOut:
     user = await user_service.update_by_admin(session, caller, user_id, body, scope=scope)
-    return UserOut.of(user)
+    return await user_service.out(session, user, scope=scope)
 
 
 @router.post("/users/{user_id}/invitation", status_code=status.HTTP_202_ACCEPTED)

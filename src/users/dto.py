@@ -1,35 +1,46 @@
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from src.users.domain.roles import RoleCode
-from src.users.persistence.models import UserModel
+from src.users.domain.groups import GroupKind
+from src.users.persistence.models import UserGroupModel, UserModel
+
+
+class GroupRef(BaseModel):
+    id: int
+    name: str
+    kind: GroupKind
+    venue_id: int | None
+
+    @classmethod
+    def of(cls, group: UserGroupModel) -> "GroupRef":
+        return cls(id=group.id, name=group.name, kind=group.kind, venue_id=group.venue_id)
 
 
 class UserOut(BaseModel):
+    """`groups` is the caller's view: memberships at their venue plus
+    Customer, never another venue's (ADR 0003)."""
+
     id: int
     email: str
     first_name: str
     last_name: str
     mobile: str | None
-    role: RoleCode
-    venue_id: int | None
     is_active: bool
     email_verified_at: datetime | None
+    groups: list[GroupRef]
 
     @classmethod
-    def of(cls, user: UserModel) -> "UserOut":
+    def of(cls, user: UserModel, groups: list[UserGroupModel]) -> "UserOut":
         return cls(
             id=user.id,
             email=user.email,
             first_name=user.first_name,
             last_name=user.last_name,
             mobile=user.mobile,
-            role=RoleCode(user.role.code),
-            venue_id=user.venue_id,
             is_active=user.is_active,
             email_verified_at=user.email_verified_at,
+            groups=[GroupRef.of(g) for g in groups],
         )
 
 
@@ -68,9 +79,9 @@ class PasswordChangeRequest(BaseModel):
 
 
 class StaffInviteRequest(BaseModel):
-    """The MANAGER's invite. Role and venue are absent by construction: the
-    server fixes role = VENUE_STAFF and venue = the caller's own (spec §6.4).
-    extra="forbid" turns a smuggled role_id or venue_id into a 422."""
+    """An invite into one group. There is no venue or role field: the venue
+    is the group's, and the server checks the group is one the caller may
+    fill (ADR 0003). extra="forbid" turns a smuggled venue_id into a 422."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -78,15 +89,13 @@ class StaffInviteRequest(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     mobile: str | None = Field(default=None, max_length=32)
+    group_id: int
 
 
 class AdminInviteRequest(StaffInviteRequest):
-    """The SUPER_ADMIN's invite, where choosing role and venue is the
-    legitimate case. SUPER_ADMIN itself is not offered — only the CLI makes
+    """The SUPER_ADMIN's invite: the same body, but any staff or master
+    group at any venue. A super admin is never invited — only the CLI makes
     one."""
-
-    role: Literal[RoleCode.VENUE_MANAGER, RoleCode.VENUE_STAFF]
-    venue_id: int
 
 
 class AdminUserUpdate(BaseModel):

@@ -33,7 +33,7 @@ async def test_register_creates_inactive_player_and_emails_link(
 
     assert response.status_code == 201
     body = response.json()
-    assert body["role"] == "PLAYER"
+    assert [g["kind"] for g in body["groups"]] == ["CUSTOMER"]
     assert body["is_active"] is False
     assert body["email_verified_at"] is None
     assert "password" not in body and "password_hash" not in body

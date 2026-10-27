@@ -13,12 +13,14 @@ from src.auth.dto import (
     TokenRequest,
 )
 from src.auth.rate_limit import EMAIL_LIMIT, LOGIN_LIMIT, limiter
+from src.auth.scope import VenueScope
 from src.auth.service import auth_service
 from src.database.session import get_session
 from src.email.port import EmailSender, get_email_sender, send_quietly
 from src.email.templates import password_reset_email, verification_email
 from src.users.dto import UserOut
 from src.users.persistence.models import UserModel
+from src.users.service import user_service
 from src.utils.api import API_PREFIX
 
 router = APIRouter(prefix=f"{API_PREFIX}/auth", tags=["auth"])
@@ -32,11 +34,11 @@ async def register(
     session: AsyncSession = Depends(get_session),
     sender: EmailSender = Depends(get_email_sender),
 ) -> UserOut:
-    """Players only — staff are invited (spec §6.4). The account stays
-    inactive until the emailed link is followed."""
+    """Customers only — staff are invited (spec §6.4). The account joins the
+    Customer group and stays inactive until the emailed link is followed."""
     user, token = await auth_service.register(session, body)
     await send_quietly(sender, verification_email(user.email, user.first_name, token))
-    return UserOut.of(user)
+    return await user_service.out(session, user, scope=VenueScope.everything())
 
 
 @router.post("/verify-email", status_code=status.HTTP_204_NO_CONTENT)

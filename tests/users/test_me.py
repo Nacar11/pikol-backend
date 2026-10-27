@@ -1,7 +1,8 @@
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.users.domain.roles import PERMISSIONS, ROLE_PERMISSIONS, RoleCode
+from src.users.domain.groups import FRONT_DESK_CODES
+from src.users.domain.roles import PERMISSIONS, RoleCode
 from src.utils.api import API_PREFIX
 from tests.auth.helpers import AUTH, PASSWORD, bearer, login, make_user, make_venue
 
@@ -18,8 +19,11 @@ async def test_get_me_returns_own_profile(client: AsyncClient, db_session: Async
     response = await client.get(ME, headers=bearer(await login(client, user.email)))
 
     assert response.status_code == 200
-    assert response.json()["id"] == user.id
-    assert response.json()["role"] == "PLAYER"
+    body = response.json()
+    assert body["id"] == user.id
+    assert body["is_customer"] is True
+    assert [(g["name"], g["kind"]) for g in body["groups"]] == [("Customer", "CUSTOMER")]
+    assert "role" not in body and "venue_id" not in body
 
 
 async def test_patch_me_updates_profile(client: AsyncClient, db_session: AsyncSession) -> None:
@@ -65,7 +69,7 @@ async def test_permissions_staff_matches_matrix(
         f"{ME}/permissions", headers=bearer(await login(client, staff.email))
     )
 
-    assert response.json() == sorted(ROLE_PERMISSIONS[RoleCode.VENUE_STAFF])
+    assert response.json() == sorted(FRONT_DESK_CODES)
 
 
 async def test_permissions_player_is_empty(client: AsyncClient, db_session: AsyncSession) -> None:

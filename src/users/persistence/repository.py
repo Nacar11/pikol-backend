@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, exists, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.domain.roles import RoleCode
-from src.users.persistence.models import RoleModel, UserModel
+from src.users.persistence.models import RoleModel, UserGroupMemberModel, UserGroupModel, UserModel
 
 if TYPE_CHECKING:
     from src.auth.scope import VenueScope
@@ -35,10 +35,40 @@ class UserRepository:
     # The two methods below read venue-owned data, so `scope` is keyword-only
     # with NO default — see VenueScope.
 
+    @staticmethod
+    def _at(scope: "VenueScope") -> ColumnElement[bool]:
+        """Someone is "at" a venue when they hold one of its groups (ADR 0003).
+        The owner sees everyone, members of no group included."""
+        if scope.all_venues:
+            return true()
+        return exists().where(
+            UserGroupMemberModel.user_id == UserModel.id,
+            UserGroupMemberModel.group_id == UserGroupModel.id,
+            scope.where(UserGroupModel.venue_id),
+        )
+
     async def list(
-        self, session: AsyncSession, *, scope: "VenueScope", page: int, limit: int
+        self,
+        session: AsyncSession,
+        *,
+        scope: "VenueScope",
+        page: int,
+        limit: int,
+        q: str | None = None,
     ) -> tuple[list[UserModel], int]:
-        live = (UserModel.deleted_at.is_(None), scope.where(UserModel.venue_id))
+        live = [UserModel.deleted_at.is_(None), self._at(scope)]
+        if q:
+            # Escape LIKE's wildcards so "a_b" matches literally.
+            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            live.append(
+                or_(
+                    *(
+                        column.ilike(pattern, escape="\\")
+                        for column in (UserModel.email, UserModel.first_name, UserModel.last_name)
+                    )
+                )
+            )
         total = (await session.execute(select(func.count()).where(*live))).scalar_one()
         rows = await session.execute(
             select(UserModel)
@@ -56,7 +86,7 @@ class UserRepository:
             select(UserModel).where(
                 UserModel.id == user_id,
                 UserModel.deleted_at.is_(None),
-                scope.where(UserModel.venue_id),
+                self._at(scope),
             )
         )
         return result.scalar_one_or_none()

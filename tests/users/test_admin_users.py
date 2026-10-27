@@ -3,18 +3,20 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.email.adapters import MemoryEmailSender
+from src.users.domain.groups import GroupKind
 from src.users.domain.roles import RoleCode
-from src.users.persistence.models import UserModel
+from src.users.persistence.group_repository import group_repository
+from src.users.persistence.models import UserGroupModel, UserModel
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
 from tests.auth.helpers import AUTH, bearer, login, make_user, make_venue
 
 ADMIN = f"{API_PREFIX}/admin"
-INVITEE = {"email": "new@x.com", "first_name": "New", "last_name": "Staff"}
+PERSON = {"email": "new@x.com", "first_name": "New", "last_name": "Staff"}
 
 
 class World:
@@ -25,6 +27,11 @@ class World:
     manager_a_user: UserModel
     staff_a: UserModel
     staff_b: UserModel
+    front_desk_a: int
+    front_desk_b: int
+    master_a: int
+    master_b: int
+    invitee: dict[str, Any]  # PERSON, into Front desk at A
 
 
 @pytest.fixture
@@ -40,6 +47,15 @@ async def world(client: AsyncClient, db_session: AsyncSession) -> World:
     w.staff_b = await make_user(db_session, role=RoleCode.VENUE_STAFF, venue_id=w.venue_b.id)
     w.admin = bearer(await login(client, admin.email))
     w.manager_a = bearer(await login(client, w.manager_a_user.email))
+    w.front_desk_a = await group_repository.venue_group_id(
+        db_session, w.venue_a.id, GroupKind.STAFF
+    )
+    w.front_desk_b = await group_repository.venue_group_id(
+        db_session, w.venue_b.id, GroupKind.STAFF
+    )
+    w.master_a = await group_repository.venue_group_id(db_session, w.venue_a.id, GroupKind.MASTER)
+    w.master_b = await group_repository.venue_group_id(db_session, w.venue_b.id, GroupKind.MASTER)
+    w.invitee = {**PERSON, "group_id": w.front_desk_a}
     return w
 
 
@@ -70,7 +86,8 @@ async def test_manager_lists_only_own_venue(client: AsyncClient, world: World) -
     assert response.status_code == 200
     assert world.staff_a.id in ids
     assert world.staff_b.id not in ids
-    assert all(u["venue_id"] == world.venue_a.id for u in response.json()["data"])
+    venues = {g["venue_id"] for u in response.json()["data"] for g in u["groups"]}
+    assert venues <= {world.venue_a.id, None}  # A's groups, and Customer
 
 
 async def test_admin_lists_every_venue(client: AsyncClient, world: World) -> None:
@@ -93,11 +110,13 @@ async def test_manager_cannot_see_other_venue_user_by_id(client: AsyncClient, wo
     assert _sans_request_id(other.json()) == _sans_request_id(missing.json())
 
 
-@pytest.mark.parametrize("smuggled", [{"role_id": 1}, {"role": "SUPER_ADMIN"}, {"venue_id": -1}])
+@pytest.mark.parametrize(
+    "smuggled", [{"role_id": 1}, {"role": "SUPER_ADMIN"}, {"venue_id": -1}, {"kind": "MASTER"}]
+)
 async def test_manager_invite_rejects_privilege_fields(
     client: AsyncClient, world: World, smuggled: dict[str, Any]
 ) -> None:
-    body = {**INVITEE, **smuggled}
+    body = {**world.invitee, **smuggled}
     if "venue_id" in smuggled:
         body["venue_id"] = world.venue_b.id
 
@@ -106,15 +125,18 @@ async def test_manager_invite_rejects_privilege_fields(
     assert response.status_code == 422
 
 
-async def test_manager_invite_pins_role_and_venue(
+async def test_manager_invites_into_own_staff_group(
     client: AsyncClient, world: World, outbox: MemoryEmailSender, db_session: AsyncSession
 ) -> None:
-    response = await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=INVITEE)
+    response = await client.post(
+        f"{ADMIN}/venue-staff", headers=world.manager_a, json=world.invitee
+    )
 
     assert response.status_code == 201
     body = response.json()
-    assert body["role"] == "VENUE_STAFF"
-    assert body["venue_id"] == world.venue_a.id
+    assert [(g["id"], g["venue_id"]) for g in body["groups"]] == [
+        (world.front_desk_a, world.venue_a.id)
+    ]
     assert body["is_active"] is False
     created = (
         await db_session.execute(select(UserModel).where(UserModel.id == body["id"]))
@@ -130,57 +152,71 @@ async def test_staff_cannot_invite(
 ) -> None:
     staff = bearer(await login(client, world.staff_a.email))
 
-    response = await client.post(f"{ADMIN}/venue-staff", headers=staff, json=INVITEE)
+    response = await client.post(f"{ADMIN}/venue-staff", headers=staff, json=world.invitee)
 
     assert response.status_code == 403
 
 
-async def test_admin_without_venue_cannot_use_manager_route(
+async def test_manager_cannot_invite_into_another_venues_group(
     client: AsyncClient, world: World
 ) -> None:
-    response = await client.post(f"{ADMIN}/venue-staff", headers=world.admin, json=INVITEE)
+    """Indistinguishable from a group that does not exist."""
+    foreign = await client.post(
+        f"{ADMIN}/venue-staff",
+        headers=world.manager_a,
+        json={**PERSON, "group_id": world.front_desk_b},
+    )
+    missing = await client.post(
+        f"{ADMIN}/venue-staff", headers=world.manager_a, json={**PERSON, "group_id": 999999}
+    )
+
+    assert foreign.status_code == missing.status_code == 422
+    assert foreign.json()["code"] == missing.json()["code"] == "UNKNOWN_GROUP"
+
+
+async def test_manager_cannot_invite_a_master(client: AsyncClient, world: World) -> None:
+    response = await client.post(
+        f"{ADMIN}/venue-staff", headers=world.manager_a, json={**PERSON, "group_id": world.master_a}
+    )
 
     assert response.status_code == 403
 
 
-async def test_admin_invites_manager_to_any_venue(client: AsyncClient, world: World) -> None:
+async def test_admin_invites_master_to_any_venue(client: AsyncClient, world: World) -> None:
     response = await client.post(
-        f"{ADMIN}/users",
-        headers=world.admin,
-        json={**INVITEE, "role": "VENUE_MANAGER", "venue_id": world.venue_b.id},
+        f"{ADMIN}/users", headers=world.admin, json={**PERSON, "group_id": world.master_b}
     )
 
     assert response.status_code == 201
-    assert response.json()["role"] == "VENUE_MANAGER"
-    assert response.json()["venue_id"] == world.venue_b.id
+    assert [g["kind"] for g in response.json()["groups"]] == ["MASTER"]
+    assert response.json()["groups"][0]["venue_id"] == world.venue_b.id
 
 
-async def test_admin_cannot_invite_a_super_admin(client: AsyncClient, world: World) -> None:
+async def test_customer_group_is_not_an_invitation(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    customers = await group_repository.customer_group_id(db_session)
+
     response = await client.post(
-        f"{ADMIN}/users",
-        headers=world.admin,
-        json={**INVITEE, "role": "SUPER_ADMIN", "venue_id": world.venue_a.id},
+        f"{ADMIN}/users", headers=world.admin, json={**PERSON, "group_id": customers}
     )
 
     assert response.status_code == 422
+    assert response.json()["code"] == "NOT_A_STAFF_GROUP"
 
 
-async def test_admin_invite_unknown_venue_is_422(client: AsyncClient, world: World) -> None:
+async def test_admin_invite_unknown_group_is_422(client: AsyncClient, world: World) -> None:
     response = await client.post(
-        f"{ADMIN}/users",
-        headers=world.admin,
-        json={**INVITEE, "role": "VENUE_STAFF", "venue_id": 999999},
+        f"{ADMIN}/users", headers=world.admin, json={**PERSON, "group_id": 999999}
     )
 
     assert response.status_code == 422
-    assert response.json()["code"] == "UNKNOWN_VENUE"
+    assert response.json()["code"] == "UNKNOWN_GROUP"
 
 
 async def test_manager_cannot_use_admin_invite(client: AsyncClient, world: World) -> None:
     response = await client.post(
-        f"{ADMIN}/users",
-        headers=world.manager_a,
-        json={**INVITEE, "role": "VENUE_MANAGER", "venue_id": world.venue_a.id},
+        f"{ADMIN}/users", headers=world.manager_a, json={**PERSON, "group_id": world.master_a}
     )
 
     assert response.status_code == 403
@@ -190,11 +226,11 @@ async def test_invite_existing_email_is_409(client: AsyncClient, world: World) -
     response = await client.post(
         f"{ADMIN}/venue-staff",
         headers=world.manager_a,
-        json={**INVITEE, "email": world.staff_a.email.upper()},
+        json={**world.invitee, "email": world.staff_a.email.upper()},
     )
 
     assert response.status_code == 409
-    assert response.json()["code"] == "EMAIL_TAKEN"
+    assert response.json()["code"] == "EMAIL_EXISTS"
 
 
 async def test_manager_cannot_modify_another_manager(
@@ -207,6 +243,80 @@ async def test_manager_cannot_modify_another_manager(
     )
 
     assert response.status_code == 403
+
+
+async def test_staff_holding_user_manage_cannot_touch_a_master(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    leads = UserGroupModel(kind=GroupKind.STAFF, venue_id=world.venue_a.id, name="Leads")
+    db_session.add(leads)
+    await db_session.flush()
+    await db_session.execute(
+        text(
+            "INSERT INTO user_group_permissions (group_id, permission_id) "
+            "SELECT :g, id FROM permissions WHERE code = 'USER:Manage'"
+        ).bindparams(g=leads.id)
+    )
+    lead = await make_user(db_session, role=RoleCode.VENUE_STAFF, venue_id=world.venue_a.id)
+    await group_repository.add_member(db_session, leads.id, lead.id, added_by=None)
+    headers = bearer(await login(client, lead.email))
+
+    on_master = await client.patch(
+        f"{ADMIN}/users/{world.manager_a_user.id}", headers=headers, json={"is_active": False}
+    )
+    on_staff = await client.patch(
+        f"{ADMIN}/users/{world.staff_a.id}", headers=headers, json={"first_name": "Renamed"}
+    )
+
+    assert on_master.status_code == 403
+    assert on_staff.status_code == 200
+
+
+async def test_venue_cannot_deactivate_someone_who_works_elsewhere(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    await group_repository.add_member(
+        db_session, world.front_desk_b, world.staff_a.id, added_by=None
+    )
+
+    by_manager = await client.patch(
+        f"{ADMIN}/users/{world.staff_a.id}", headers=world.manager_a, json={"is_active": False}
+    )
+    by_owner = await client.patch(
+        f"{ADMIN}/users/{world.staff_a.id}", headers=world.admin, json={"is_active": False}
+    )
+
+    assert by_manager.status_code == 403
+    assert by_owner.status_code == 200
+
+
+async def test_venue_sees_only_its_own_memberships(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    await group_repository.add_member(
+        db_session, world.front_desk_b, world.staff_a.id, added_by=None
+    )
+
+    from_a = await client.get(f"{ADMIN}/users/{world.staff_a.id}", headers=world.manager_a)
+    from_owner = await client.get(f"{ADMIN}/users/{world.staff_a.id}", headers=world.admin)
+
+    assert [g["id"] for g in from_a.json()["groups"]] == [world.front_desk_a]
+    assert {g["id"] for g in from_owner.json()["groups"]} == {
+        world.front_desk_a,
+        world.front_desk_b,
+    }
+
+
+async def test_admin_searches_users_by_name_or_email(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    kim = await make_user(db_session, email="kim.tan@x.com")
+
+    by_email = await client.get(f"{ADMIN}/users", headers=world.admin, params={"q": "KIM.TAN"})
+    wildcard = await client.get(f"{ADMIN}/users", headers=world.admin, params={"q": "%"})
+
+    assert [u["id"] for u in by_email.json()["data"]] == [kim.id]
+    assert wildcard.json()["total"] == 0
 
 
 async def test_cannot_modify_self_via_admin_route(client: AsyncClient, world: World) -> None:
@@ -247,7 +357,7 @@ async def test_deactivating_staff_kills_their_sessions(client: AsyncClient, worl
 async def test_accept_invitation_activates_and_logs_in(
     client: AsyncClient, world: World, outbox: MemoryEmailSender
 ) -> None:
-    await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=INVITEE)
+    await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=world.invitee)
 
     accepted = await client.post(
         f"{AUTH}/invitations/accept",
@@ -257,15 +367,15 @@ async def test_accept_invitation_activates_and_logs_in(
     assert accepted.status_code == 204
     tokens = await login(client, "new@x.com", "my-own-pass-1")
     me = (await client.get(f"{API_PREFIX}/users/me", headers=bearer(tokens))).json()
-    assert me["role"] == "VENUE_STAFF"
-    assert me["venue_id"] == world.venue_a.id
+    assert [g["id"] for g in me["groups"]] == [world.front_desk_a]
+    assert me["is_customer"] is False
     assert me["email_verified_at"] is not None
 
 
 async def test_resend_invitation_kills_the_old_link(
     client: AsyncClient, world: World, outbox: MemoryEmailSender
 ) -> None:
-    created = await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=INVITEE)
+    created = await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=world.invitee)
     old = _invite_token(outbox)
 
     resent = await client.post(
@@ -283,7 +393,7 @@ async def test_resend_invitation_kills_the_old_link(
 async def test_revoked_invitation_link_is_dead(
     client: AsyncClient, world: World, outbox: MemoryEmailSender
 ) -> None:
-    created = await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=INVITEE)
+    created = await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=world.invitee)
     token = _invite_token(outbox)
 
     revoked = await client.delete(
@@ -311,7 +421,7 @@ async def test_deactivated_invitee_cannot_reactivate_via_old_link(
 ) -> None:
     """Accepting an invitation sets is_active = True. If deactivation left the
     link alive, the invitee could undo their own deactivation."""
-    created = await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=INVITEE)
+    created = await client.post(f"{ADMIN}/venue-staff", headers=world.manager_a, json=world.invitee)
     token = _invite_token(outbox)
 
     await client.patch(

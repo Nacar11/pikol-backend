@@ -1,4 +1,6 @@
-from sqlalchemy import insert, literal, select
+from typing import TYPE_CHECKING
+
+from sqlalchemy import insert, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.domain.groups import (
@@ -14,6 +16,9 @@ from src.users.persistence.models import (
     UserGroupModel,
     user_group_permissions,
 )
+
+if TYPE_CHECKING:
+    from src.auth.scope import VenueScope
 
 
 class GroupRepository:
@@ -110,6 +115,68 @@ class GroupRepository:
         if venue_id is not None:
             query = query.where(UserGroupModel.venue_id == venue_id)
         return frozenset((await session.execute(query)).scalars())
+
+    # The reads below touch venue-owned groups, so `scope` is keyword-only
+    # with NO default — see VenueScope.
+
+    async def get_scoped(
+        self, session: AsyncSession, group_id: int, *, scope: "VenueScope"
+    ) -> UserGroupModel | None:
+        """A group the caller may see. The CUSTOMER group has no venue, so a
+        venue-bound scope never matches it — only the owner sees it."""
+        result = await session.execute(
+            select(UserGroupModel).where(
+                UserGroupModel.id == group_id, scope.where(UserGroupModel.venue_id)
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def groups_for(
+        self, session: AsyncSession, user_ids: list[int], *, scope: "VenueScope"
+    ) -> dict[int, list[UserGroupModel]]:
+        """Each user's groups as the caller may see them: those at the caller's
+        venue, plus Customer — never a membership at another venue."""
+        rows = await session.execute(
+            select(UserGroupMemberModel.user_id, UserGroupModel)
+            .join(UserGroupModel, UserGroupModel.id == UserGroupMemberModel.group_id)
+            .where(
+                UserGroupMemberModel.user_id.in_(user_ids),
+                or_(
+                    UserGroupModel.kind == GroupKind.CUSTOMER,
+                    scope.where(UserGroupModel.venue_id),
+                ),
+            )
+            .order_by(UserGroupModel.venue_id.nulls_first(), UserGroupModel.id)
+        )
+        groups: dict[int, list[UserGroupModel]] = {user_id: [] for user_id in user_ids}
+        for user_id, group in rows.tuples():
+            groups[user_id].append(group)
+        return groups
+
+    async def is_master_at(self, session: AsyncSession, user_id: int, venue_id: int) -> bool:
+        result = await session.execute(
+            select(UserGroupMemberModel.user_id)
+            .join(UserGroupModel, UserGroupModel.id == UserGroupMemberModel.group_id)
+            .where(
+                UserGroupMemberModel.user_id == user_id,
+                UserGroupModel.kind == GroupKind.MASTER,
+                UserGroupModel.venue_id == venue_id,
+            )
+        )
+        return result.first() is not None
+
+    async def belongs_elsewhere(self, session: AsyncSession, user_id: int, venue_id: int) -> bool:
+        """Any membership not at `venue_id` — another venue's group, or
+        Customer. Such a person is not one venue's to deactivate."""
+        result = await session.execute(
+            select(UserGroupMemberModel.user_id)
+            .join(UserGroupModel, UserGroupModel.id == UserGroupMemberModel.group_id)
+            .where(
+                UserGroupMemberModel.user_id == user_id,
+                UserGroupModel.venue_id.is_distinct_from(venue_id),
+            )
+        )
+        return result.first() is not None
 
     async def add_member(
         self, session: AsyncSession, group_id: int, user_id: int, *, added_by: int | None
