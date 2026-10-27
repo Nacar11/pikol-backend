@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -10,6 +10,7 @@ from src.database.base import Base
 from src.payments.domain.enums import PaymentOutcome, PaymentProviderName
 
 EVENT_CONSTRAINT = "webhook_events_provider_event_id_key"
+OPEN_ATTEMPT_CONSTRAINT = "uq_payments_one_open_attempt"
 
 payment_provider = ENUM(*PaymentProviderName, name="payment_provider", create_type=False)
 payment_outcome = ENUM(*PaymentOutcome, name="payment_outcome", create_type=False)
@@ -20,6 +21,15 @@ class PaymentModel(Base):
     "Continue to Maya". checkouts.status holds the verdict."""
 
     __tablename__ = "payments"
+    __table_args__ = (
+        # One payable Maya session per checkout (dbml Appendix A §16).
+        Index(
+            OPEN_ATTEMPT_CONSTRAINT,
+            "checkout_id",
+            unique=True,
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     checkout_id: Mapped[int] = mapped_column(

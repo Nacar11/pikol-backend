@@ -1,5 +1,7 @@
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bookings.domain.enums import BookingStatus, PaymentStatus
@@ -8,9 +10,11 @@ from src.bookings.persistence.repository import booking_repository
 from src.checkouts.persistence.models import CheckoutModel
 from src.checkouts.persistence.repository import checkout_repository
 from src.payments.adapters.mock import MockProvider
-from src.payments.domain.enums import PaymentOutcome
+from src.payments.domain.enums import PaymentOutcome, PaymentProviderName
 from src.payments.domain.port import ProviderError
 from src.payments.persistence.models import PaymentModel
+from src.payments.persistence.repository import payment_repository
+from src.utils.errors import constraint_of
 from tests.bookings.conftest import CHECKOUTS, World, hold
 from tests.bookings.helpers import next_hour
 from tests.checkouts.helpers import action, cell, item, lapse
@@ -169,3 +173,50 @@ async def test_cancel_after_the_hold_ended_is_refused(
     response = await action(client, world.player, booking["checkout_id"], "cancel")
 
     assert (response.status_code, response.json()["code"]) == (409, "HOLD_ENDED")
+
+
+async def test_a_checkout_has_one_open_maya_attempt(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    booking = await hold(client, world.player, world.a.court.id, next_hour())
+    await action(client, world.player, booking["checkout_id"], "pay")
+
+    with pytest.raises(IntegrityError) as exc:
+        async with db_session.begin_nested():
+            db_session.add(
+                PaymentModel(
+                    checkout_id=booking["checkout_id"],
+                    provider=PaymentProviderName.MOCK,
+                    provider_checkout_id="second-attempt",
+                    checkout_url="http://test/second",
+                    amount_centavos=booking["checkout"]["total_centavos"],
+                    status=PaymentOutcome.PENDING,
+                )
+            )
+            await db_session.flush()
+    assert constraint_of(exc.value) == "uq_payments_one_open_attempt"
+
+
+async def test_concurrent_pay_returns_the_first_maya_session(
+    client: AsyncClient,
+    world: World,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two /pay requests both saw no attempt and both opened Maya: the second
+    insert loses to the index and returns the winner's URL, never its own."""
+    booking = await hold(client, world.player, world.a.court.id, next_hour())
+    first = (await action(client, world.player, booking["checkout_id"], "pay")).json()
+    real = payment_repository.latest_for_checkout
+    calls = {"n": 0}
+
+    async def stale_once(session: AsyncSession, checkout_id: int) -> PaymentModel | None:
+        calls["n"] += 1
+        return None if calls["n"] == 1 else await real(session, checkout_id)
+
+    monkeypatch.setattr(payment_repository, "latest_for_checkout", stale_once)
+    second = await action(client, world.player, booking["checkout_id"], "pay")
+
+    assert second.status_code == 200, second.text
+    assert second.json()["checkout_url"] == first["checkout_url"]
+    assert await _payments(db_session, booking["checkout_id"]) == 1

@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.checkouts.persistence.models import RefundModel
 from src.payments.domain.enums import PaymentOutcome, PaymentProviderName
 from src.payments.domain.port import CheckoutSession
-from src.payments.persistence.models import EVENT_CONSTRAINT, PaymentModel, WebhookEventModel
+from src.payments.persistence.models import (
+    EVENT_CONSTRAINT,
+    OPEN_ATTEMPT_CONSTRAINT,
+    PaymentModel,
+    WebhookEventModel,
+)
 from src.utils.errors import constraint_of
 
 
@@ -20,7 +25,9 @@ class PaymentRepository:
         provider: PaymentProviderName,
         checkout: CheckoutSession,
         amount_centavos: int,
-    ) -> PaymentModel:
+    ) -> PaymentModel | None:
+        """Record the open attempt. None when another request already
+        recorded one (uq_payments_one_open_attempt) — the caller uses that."""
         payment = PaymentModel(
             checkout_id=checkout_id,
             provider=provider,
@@ -29,8 +36,14 @@ class PaymentRepository:
             amount_centavos=amount_centavos,
             status=PaymentOutcome.PENDING,
         )
-        session.add(payment)
-        await session.flush()
+        try:
+            async with session.begin_nested():
+                session.add(payment)
+                await session.flush()
+        except IntegrityError as exc:
+            if constraint_of(exc) == OPEN_ATTEMPT_CONSTRAINT:
+                return None
+            raise
         return payment
 
     async def latest_for_checkout(
@@ -52,15 +65,24 @@ class PaymentRepository:
     async def by_checkout_id(
         self, session: AsyncSession, provider: PaymentProviderName, checkout_id: str
     ) -> PaymentModel | None:
+        """Unlocked: callers lock the checkout first, then `lock` this row —
+        the order cancel and the refund flow use, so no two paths deadlock."""
         result = await session.execute(
-            select(PaymentModel)
-            .where(
+            select(PaymentModel).where(
                 PaymentModel.provider == provider,
                 PaymentModel.provider_checkout_id == checkout_id,
             )
-            .with_for_update()
         )
         return result.scalar_one_or_none()
+
+    async def lock(self, session: AsyncSession, payment_id: int) -> PaymentModel:
+        result = await session.execute(
+            select(PaymentModel)
+            .where(PaymentModel.id == payment_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one()
 
     async def record_event(
         self,

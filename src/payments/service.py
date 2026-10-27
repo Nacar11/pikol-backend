@@ -78,13 +78,20 @@ class PaymentService:
         except ProviderError:
             logger.warning("checkout creation failed: checkout=%s", checkout.reference_code)
             raise provider_unavailable() from None
-        await payment_repository.add_checkout(
+        recorded = await payment_repository.add_checkout(
             session,
             checkout_id=checkout.id,
             provider=provider.name,
             checkout=opened,
             amount_centavos=checkout.total_centavos,
         )
+        if recorded is None:
+            # A concurrent request recorded its session first. Ours is never
+            # shown to anyone, so it can never be paid.
+            winner = await payment_repository.latest_for_checkout(session, checkout.id)
+            assert winner is not None
+            logger.info("concurrent checkout lost the race: %s", checkout.reference_code)
+            return winner.checkout_url
         await session.commit()
         return opened.checkout_url
 
@@ -140,8 +147,10 @@ class PaymentService:
         if row is None:
             logger.warning("payment for an unknown checkout: %s", payment.payment_id)
             return Effect()
+        # Checkout, then its groups, then the payment: the one lock order.
         checkout = await checkout_repository.get_for_update(session, row.checkout_id)
         groups = await self._lock_groups(session, checkout)
+        row = await payment_repository.lock(session, row.id)
         row.provider_status = payment.provider_status
         row.provider_payment_id = payment.payment_id
         row.raw_payload = payment.raw
