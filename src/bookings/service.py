@@ -22,6 +22,7 @@ from src.bookings.dto import (
     MAX_CLOSURE,
     Availability,
     ClosureRequest,
+    DayOccupancy,
     GridCourt,
     GridSlot,
     GridStatus,
@@ -129,6 +130,36 @@ class BookingService:
         ]
         slot_prices = [(s, resolver.price_at(s)) for s in starts]
         return starts, slot_prices, sum(p for _, p in slot_prices)
+
+    async def daily_occupancy(
+        self, session: AsyncSession, venue_id: int, first_day: date, days: int, *, scope: VenueScope
+    ) -> list[DayOccupancy]:
+        """Booked and bookable court-hours per Manila day, for the console's
+        two-week strip. Built on `occupancy`, so a lapsed hold never counts.
+        A closure is not a booking: it shrinks `bookable_hours` instead."""
+        await venue_service.get(session, venue_id, scope=scope, active_only=False)
+        courts, _ = await court_repository.list_for_venue(
+            session, venue_id, scope=scope, page=1, limit=100, active_only=True
+        )
+        start, _ = manila_day_bounds(first_day)
+        _, end = manila_day_bounds(first_day + timedelta(days=days - 1))
+        taken = await booking_repository.occupancy(
+            session, [c.id for c in courts], start, end, datetime.now(UTC), scope=scope
+        )
+        booked: dict[date, int] = {}
+        closed: dict[date, int] = {}
+        for (_, starts_at), type_ in taken.items():
+            day = starts_at.astimezone(MANILA).date()
+            bucket = closed if type_ == BookingType.MAINTENANCE else booked
+            bucket[day] = bucket.get(day, 0) + 1
+        return [
+            DayOccupancy(
+                date=day,
+                booked_hours=booked.get(day, 0),
+                bookable_hours=len(courts) * 24 - closed.get(day, 0),
+            )
+            for day in (first_day + timedelta(days=i) for i in range(days))
+        ]
 
     async def availability(self, session: AsyncSession, venue_id: int, day: date) -> Availability:
         """The whole day grid for a venue (spec §7.2): one occupancy query,

@@ -9,6 +9,7 @@ from src.auth.scope import VenueScope
 from src.bookings.domain.enums import BookingStatus, BookingType
 from src.bookings.dto import (
     AdminBookingOut,
+    DayOccupancy,
     MarkPaidRequest,
     OutcomeRequest,
     ResolveRequest,
@@ -20,6 +21,7 @@ from src.bookings.service import booking_service
 from src.database.session import get_session
 from src.users.persistence.models import UserModel
 from src.utils.api import API_PREFIX
+from src.utils.errors import AppError
 from src.utils.pagination import Page
 from src.utils.time import manila_day_bounds
 
@@ -86,6 +88,23 @@ async def unfulfilled(
     return Page.of(
         [AdminBookingOut.of_admin(g, now) for g in groups], total=total, page=page, limit=limit
     )
+
+
+@router.get("/occupancy")
+async def occupancy(
+    start: date = Query(alias="from", description="First Manila day"),
+    days: int = Query(14, ge=1, le=31),
+    venue_id: int | None = Query(None, description="Required for the owner"),
+    _: UserModel = Depends(read_any),
+    scope: VenueScope = Depends(get_venue_scope),
+    session: AsyncSession = Depends(get_session),
+) -> list[DayOccupancy]:
+    """Booked vs bookable court-hours per day, for the two-week strip.
+    Declared before /{booking_id} so "occupancy" is not read as an id."""
+    venue = venue_id if venue_id is not None else scope.venue_id
+    if venue is None:
+        raise AppError(422, "VENUE_REQUIRED", "Choose a venue with venue_id.")
+    return await booking_service.daily_occupancy(session, venue, start, days, scope=scope)
 
 
 @router.post("/walk-in", status_code=status.HTTP_201_CREATED)

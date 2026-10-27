@@ -158,6 +158,14 @@ class GridCourt(BaseModel):
     slots: list[GridSlot]
 
 
+class DayOccupancy(BaseModel):
+    """One Manila day of the console's two-week strip."""
+
+    date: date
+    booked_hours: int
+    bookable_hours: int
+
+
 class Availability(BaseModel):
     venue_id: int
     date: date
