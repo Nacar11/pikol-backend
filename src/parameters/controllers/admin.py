@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.dependencies import require_permission
+from src.auth.access import require_permission
 from src.database.session import get_session
 from src.parameters.admin import parameter_admin_service
 from src.parameters.dto import ParameterOut, ParameterUpdate

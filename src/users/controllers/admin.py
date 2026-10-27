@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.dependencies import forbidden, require_permission, require_super_admin
-from src.auth.scope import VenueScope, get_venue_scope
+from src.auth.access import get_venue_scope, require_permission
+from src.auth.dependencies import forbidden, require_super_admin
+from src.auth.scope import VenueScope
 from src.database.session import get_session
 from src.email.port import EmailSender, get_email_sender, send_quietly
 from src.email.templates import invitation_email

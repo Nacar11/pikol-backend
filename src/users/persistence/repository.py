@@ -3,8 +3,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.users.domain.roles import PERMISSIONS, RoleCode
-from src.users.persistence.models import PermissionModel, RoleModel, UserModel, role_permissions
+from src.users.domain.roles import RoleCode
+from src.users.persistence.models import RoleModel, UserModel
 
 if TYPE_CHECKING:
     from src.auth.scope import VenueScope
@@ -31,19 +31,6 @@ class UserRepository:
     async def role_id(self, session: AsyncSession, code: RoleCode) -> int:
         result = await session.execute(select(RoleModel.id).where(RoleModel.code == code))
         return result.scalar_one()
-
-    async def permission_codes(self, session: AsyncSession, user: UserModel) -> list[str]:
-        """Sorted codes the user holds. system_admin holds every one: it is
-        the bypass axis, so it never depends on a role_permissions row."""
-        if user.system_admin:
-            return sorted(PERMISSIONS)
-        result = await session.execute(
-            select(PermissionModel.code)
-            .join(role_permissions, role_permissions.c.permission_id == PermissionModel.id)
-            .where(role_permissions.c.role_id == user.role_id)
-            .order_by(PermissionModel.code)
-        )
-        return list(result.scalars().all())
 
     # The two methods below read venue-owned data, so `scope` is keyword-only
     # with NO default — see VenueScope.

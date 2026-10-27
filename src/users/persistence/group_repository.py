@@ -61,6 +61,56 @@ class GroupRepository:
                 )
             )
 
+    async def is_customer(self, session: AsyncSession, user_id: int) -> bool:
+        result = await session.execute(
+            select(UserGroupMemberModel.user_id)
+            .join(UserGroupModel, UserGroupModel.id == UserGroupMemberModel.group_id)
+            .where(
+                UserGroupMemberModel.user_id == user_id,
+                UserGroupModel.kind == GroupKind.CUSTOMER,
+            )
+        )
+        return result.first() is not None
+
+    async def staff_memberships(
+        self, session: AsyncSession, user_id: int
+    ) -> list[tuple[int, GroupKind, str]]:
+        """(venue_id, kind, group name) for each MASTER/STAFF group the user is
+        in, ordered by venue then group — never the CUSTOMER group."""
+        rows = await session.execute(
+            select(UserGroupModel.venue_id, UserGroupModel.kind, UserGroupModel.name)
+            .join(UserGroupMemberModel, UserGroupMemberModel.group_id == UserGroupModel.id)
+            .where(
+                UserGroupMemberModel.user_id == user_id,
+                UserGroupModel.kind != GroupKind.CUSTOMER,
+            )
+            .order_by(UserGroupModel.venue_id, UserGroupModel.id)
+        )
+        return [(venue_id, kind, name) for venue_id, kind, name in rows if venue_id is not None]
+
+    async def staff_codes(
+        self, session: AsyncSession, user_id: int, *, venue_id: int | None
+    ) -> frozenset[str]:
+        """The union of the user's staff groups' codes — at ONE venue when
+        `venue_id` is given (what the server authorises on), or across all of
+        them when None (coarse client checks only, never authorisation)."""
+        query = (
+            select(PermissionModel.code)
+            .join(
+                user_group_permissions,
+                user_group_permissions.c.permission_id == PermissionModel.id,
+            )
+            .join(UserGroupModel, UserGroupModel.id == user_group_permissions.c.group_id)
+            .join(UserGroupMemberModel, UserGroupMemberModel.group_id == UserGroupModel.id)
+            .where(
+                UserGroupMemberModel.user_id == user_id,
+                UserGroupModel.kind != GroupKind.CUSTOMER,
+            )
+        )
+        if venue_id is not None:
+            query = query.where(UserGroupModel.venue_id == venue_id)
+        return frozenset((await session.execute(query)).scalars())
+
     async def add_member(
         self, session: AsyncSession, group_id: int, user_id: int, *, added_by: int | None
     ) -> None:

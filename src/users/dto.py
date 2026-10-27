@@ -33,6 +33,22 @@ class UserOut(BaseModel):
         )
 
 
+class MeOut(UserOut):
+    """The caller's own account. `is_customer` is the Customer-group axis
+    (ADR 0003) — staff access comes from /users/me/venues."""
+
+    is_customer: bool
+
+
+class MyVenueOut(BaseModel):
+    """A venue the caller may act at — what the console's switcher lists."""
+
+    venue_id: int
+    name: str
+    is_master: bool
+    groups: list[str]
+
+
 class ProfileUpdate(BaseModel):
     """What a user may change about themselves. Email, role, and venue are
     absent — and extra="forbid" makes sending them a 422, not a no-op."""

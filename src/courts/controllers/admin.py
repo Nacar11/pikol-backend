@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.dependencies import require_permission
-from src.auth.scope import VenueScope, get_venue_scope
+from src.auth.access import get_venue_scope, require_permission
+from src.auth.scope import VenueScope
 from src.courts.dto import CourtCreate, CourtOut, CourtUpdate
 from src.courts.persistence.repository import court_repository
 from src.courts.service import court_service

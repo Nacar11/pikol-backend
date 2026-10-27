@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.dependencies import require_player
+from src.auth.access import require_customer
 from src.auth.rate_limit import limiter
 from src.bookings.dto import BookingOut, CheckoutBookingOut, HoldRequest, PlayerCancelRequest
 from src.bookings.persistence.repository import booking_repository
@@ -24,7 +24,7 @@ router = APIRouter(prefix=f"{API_PREFIX}/bookings", tags=["bookings"])
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_hold(
     body: HoldRequest,
-    player: UserModel = Depends(require_player),
+    player: UserModel = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
     provider: PaymentProvider = Depends(get_payment_provider),
 ) -> CheckoutBookingOut:
@@ -45,7 +45,7 @@ async def create_hold(
 async def my_bookings(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    player: UserModel = Depends(require_player),
+    player: UserModel = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
 ) -> Page[BookingOut]:
     groups, total = await booking_repository.list_for_player(
@@ -58,7 +58,7 @@ async def my_bookings(
 @router.get("/me/{booking_id}")
 async def my_booking(
     booking_id: int,
-    player: UserModel = Depends(require_player),
+    player: UserModel = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
 ) -> BookingOut:
     """The checkout return page polls this (spec §8.2)."""
@@ -70,7 +70,7 @@ async def my_booking(
 async def cancel_my_booking(
     booking_id: int,
     body: PlayerCancelRequest,
-    player: UserModel = Depends(require_player),
+    player: UserModel = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
 ) -> BookingOut:
     group = await booking_service.cancel_by_player(session, player, booking_id, body.reason)
@@ -80,7 +80,7 @@ async def cancel_my_booking(
 @router.post("/me/{booking_id}/checkout")
 async def retry_checkout(
     booking_id: int,
-    player: UserModel = Depends(require_player),
+    player: UserModel = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
     provider: PaymentProvider = Depends(get_payment_provider),
 ) -> CheckoutBookingOut:
@@ -98,7 +98,7 @@ async def retry_checkout(
 async def refresh_payment(
     request: Request,
     booking_id: int,
-    player: UserModel = Depends(require_player),
+    player: UserModel = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
     provider: PaymentProvider = Depends(get_payment_provider),
     sender: EmailSender = Depends(get_email_sender),

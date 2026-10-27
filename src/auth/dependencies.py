@@ -1,5 +1,3 @@
-from collections.abc import Awaitable, Callable
-
 from fastapi import Depends, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,35 +36,7 @@ def forbidden() -> AppError:
     return AppError(403, "FORBIDDEN", "You do not have permission to do that.")
 
 
-def require_permission(code: str) -> Callable[..., Awaitable[UserModel]]:
-    """Dependency factory: the caller must hold `code`, or be system_admin.
-
-    system_admin short-circuits before any lookup — the unconditional bypass
-    axis, orthogonal to permissions (asima ADR 0001).
-    """
-
-    async def guard(
-        user: UserModel = Depends(get_current_user),
-        session: AsyncSession = Depends(get_session),
-    ) -> UserModel:
-        if user.system_admin:
-            return user
-        if code not in await user_repository.permission_codes(session, user):
-            raise forbidden()
-        return user
-
-    return guard
-
-
 async def require_super_admin(user: UserModel = Depends(get_current_user)) -> UserModel:
     if not user.system_admin:
-        raise forbidden()
-    return user
-
-
-async def require_player(user: UserModel = Depends(get_current_user)) -> UserModel:
-    """Online holds are for players. Staff book walk-ins through their own
-    route, which carries their own guards (spec §5.2)."""
-    if user.role.code != "PLAYER":
         raise forbidden()
     return user

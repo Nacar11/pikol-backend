@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.dependencies import require_permission
-from src.auth.scope import VenueScope, get_venue_scope
+from src.auth.access import get_venue_scope, require_permission
+from src.auth.scope import VenueScope
 from src.bookings.dto import AdminBookingOut, ClosureRequest, StaffCancelRequest
 from src.bookings.service import booking_service
 from src.database.session import get_session
