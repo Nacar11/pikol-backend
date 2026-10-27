@@ -19,6 +19,7 @@ from src.config.settings import get_settings
 from src.courts.dto import CourtCreate
 from src.courts.service import court_service
 from src.database.session import SessionLocal, engine
+from src.devtools.demo_seed import seed_customers
 from src.users.cli import create_super_admin
 from src.users.dto import MemberAdd
 from src.users.group_service import group_service
@@ -29,6 +30,7 @@ from src.venues.service import venue_service
 PASSWORD = "E2e-password-1"
 OWNER_EMAIL = "owner.e2e@example.com"
 DESK_EMAIL = "desk.e2e@example.com"
+CUSTOMER_EMAILS = ("customer1.e2e@example.com", "customer2.e2e@example.com")
 VENUES = {"E2E Riverside": 3, "E2E Lakeside": 1}
 
 
@@ -77,6 +79,8 @@ async def seed(session: AsyncSession) -> None:
     await group_service.add_member(
         session, owner, front_desk, MemberAdd(email=DESK_EMAIL), scope=everywhere
     )
+    await seed_customers(session, CUSTOMER_EMAILS, password=PASSWORD)
+    await session.commit()
 
 
 async def _main(url: str) -> None:
@@ -90,5 +94,5 @@ async def _main(url: str) -> None:
 
 if __name__ == "__main__":
     asyncio.run(_main(get_settings().database_url))
-    print(f"Seeded {OWNER_EMAIL} and {DESK_EMAIL} (password {PASSWORD}).")
+    print(f"Seeded {OWNER_EMAIL}, {DESK_EMAIL} and customers (password {PASSWORD}).")
     sys.exit(0)

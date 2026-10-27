@@ -4,7 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.courts.persistence.models import CourtModel
 from src.devtools import e2e_seed
-from src.devtools.e2e_seed import DESK_EMAIL, OWNER_EMAIL, assert_e2e_database, seed
+from src.devtools.e2e_seed import (
+    CUSTOMER_EMAILS,
+    DESK_EMAIL,
+    OWNER_EMAIL,
+    assert_e2e_database,
+    seed,
+)
+from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupMemberModel, UserGroupModel, UserModel
 from src.venues.persistence.models import VenueModel
 
@@ -43,6 +50,10 @@ async def test_seeds_the_owner_two_venues_and_a_front_desk(db_session: AsyncSess
         .where(UserGroupMemberModel.user_id == desk.id)
     )
     assert list(groups) == ["Front desk"]
+    assert CUSTOMER_EMAILS == ("customer1.e2e@example.com", "customer2.e2e@example.com")
+    for email in CUSTOMER_EMAILS:
+        customer = (await db_session.scalars(select(UserModel).filter_by(email=email))).one()
+        assert await group_repository.is_customer(db_session, customer.id)
 
 
 async def test_main_refuses_before_seeding_anything(monkeypatch: pytest.MonkeyPatch) -> None:
