@@ -19,6 +19,7 @@ from src.auth.security import (
 )
 from src.config.settings import get_settings
 from src.users.domain.roles import RoleCode
+from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserModel
 from src.users.persistence.repository import user_repository
 from src.utils.errors import AppError
@@ -116,6 +117,10 @@ class AuthService:
                 role_id=await user_repository.role_id(session, RoleCode.PLAYER),
                 is_active=False,
             ),
+        )
+        # Signing up makes you a customer (ADR 0003).
+        await group_repository.add_member(
+            session, await group_repository.customer_group_id(session), user.id, added_by=None
         )
         token = await self.issue_token(
             session, user, TokenPurpose.EMAIL_VERIFICATION, VERIFICATION_TTL

@@ -8,8 +8,10 @@ from src.auth.scope import VenueScope
 from src.auth.security import hash_password, verify_password
 from src.auth.service import auth_service, insert_user
 from src.parameters.service import parameter_service
+from src.users.domain.groups import GroupKind
 from src.users.domain.roles import RoleCode
 from src.users.dto import AdminUserUpdate, PasswordChangeRequest, ProfileUpdate
+from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserModel
 from src.users.persistence.repository import user_repository
 from src.utils.errors import AppError
@@ -92,6 +94,14 @@ class UserService:
                 venue_id=venue_id,
                 is_active=False,
             ),
+        )
+        # Mirror the role into its group until 0007 retires roles (ADR 0003).
+        kind = GroupKind.MASTER if role == RoleCode.VENUE_MANAGER else GroupKind.STAFF
+        await group_repository.add_member(
+            session,
+            await group_repository.venue_group_id(session, venue_id, kind),
+            user.id,
+            added_by=None,
         )
         invitation = await self._issue_invitation(session, user)
         await session.commit()

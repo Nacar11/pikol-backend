@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.scope import VenueScope
+from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserModel
 from src.utils.errors import AppError
 from src.venues.dto import VenueCreate, VenueUpdate
@@ -28,6 +29,8 @@ class VenueService:
             **body.model_dump(), created_by_user_id=caller.id, updated_by_user_id=caller.id
         )
         session.add(venue)
+        await session.flush()
+        await group_repository.seed_venue_groups(session, venue.id, created_by=caller.id)
         await session.commit()
         return venue
 

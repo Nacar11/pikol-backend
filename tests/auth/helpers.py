@@ -5,7 +5,9 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.security import hash_password
+from src.users.domain.groups import GroupKind
 from src.users.domain.roles import RoleCode
+from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserModel
 from src.users.persistence.repository import user_repository
 from src.utils.api import API_PREFIX
@@ -23,6 +25,7 @@ async def make_venue(session: AsyncSession, name: str = "Venue") -> VenueModel:
     venue = VenueModel(name=name)
     session.add(venue)
     await session.flush()
+    await group_repository.seed_venue_groups(session, venue.id, created_by=None)
     return venue
 
 
@@ -52,6 +55,16 @@ async def make_user(
     )
     session.add(user)
     await session.flush()
+    # The group the role maps to (ADR 0003); SUPER_ADMIN is system_admin only.
+    if role == RoleCode.PLAYER:
+        group_id: int | None = await group_repository.customer_group_id(session)
+    elif role in (RoleCode.VENUE_MANAGER, RoleCode.VENUE_STAFF) and venue_id is not None:
+        kind = GroupKind.MASTER if role == RoleCode.VENUE_MANAGER else GroupKind.STAFF
+        group_id = await group_repository.venue_group_id(session, venue_id, kind)
+    else:
+        group_id = None
+    if group_id is not None:
+        await group_repository.add_member(session, group_id, user.id, added_by=None)
     await session.refresh(user, ["role"])
     return user
 

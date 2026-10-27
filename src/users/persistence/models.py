@@ -12,10 +12,12 @@ from sqlalchemy import (
     false,
     func,
 )
+from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import Mapped, deferred, mapped_column, relationship
 
 import src.venues.persistence.models  # noqa: F401  (users.venue_id FK target)
 from src.database.base import Base
+from src.users.domain.groups import GroupKind
 
 role_permissions = Table(
     "role_permissions",
@@ -59,6 +61,61 @@ class PermissionModel(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+# postgresql.ENUM with create_type=False — migration 0006 owns creation.
+group_kind = ENUM(*GroupKind, name="group_kind", create_type=False)
+
+user_group_permissions = Table(
+    "user_group_permissions",
+    Base.metadata,
+    Column("group_id", Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "permission_id",
+        Integer,
+        ForeignKey("permissions.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    ),
+)
+
+
+class UserGroupModel(Base):
+    """A venue's MASTER or STAFF group, or the one venue-less CUSTOMER group
+    (ADR 0003). Its CHECK and partial unique indexes live in migration 0006
+    (dbml Appendix A §10–13)."""
+
+    __tablename__ = "user_groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[GroupKind] = mapped_column(group_kind, nullable=False)
+    venue_id: Mapped[int | None] = mapped_column(
+        ForeignKey("venues.id", ondelete="RESTRICT"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class UserGroupMemberModel(Base):
+    __tablename__ = "user_group_members"
+
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("user_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    added_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 
