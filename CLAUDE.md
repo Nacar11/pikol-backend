@@ -58,7 +58,7 @@ objects with no SQLAlchemy imports. CRUD features (`venues`, `courts`,
 rules (prices, windows, caps — in Postgres, tunable without a deploy). Do not
 conflate them.
 
-## What exists now (user groups complete; Maya adapter pending)
+## What exists now (customer checkouts complete; Maya adapter pending)
 
 | Module | Provides |
 |---|---|
@@ -93,29 +93,44 @@ conflate them.
 | `src/pricing/service.py` | `pricing_service.resolver_for(session, court_id, scope=)` — one query, then in-memory |
 
 | `src/bookings/domain/` | enums, `BookingError(code, detail, kind)`, `BookingSnapshot`, every transition guard, `display_status`, `new_reference_code` — pure |
-| `src/bookings/persistence/repository.py` | `booking_repository` — `insert`, **`set_status` (the only status writer)**, `expire_lapsed`, `count_live_holds`, `occupancy`, scoped and per-player reads |
-| `src/bookings/service.py` | `booking_service` — holds, availability, player cancel, walk-ins, staff cancel, mark-paid, outcome, closures, `daily_occupancy` (`GET /admin/bookings/occupancy`) |
+| `src/bookings/persistence/repository.py` | `booking_repository` — `insert`, **`set_status` (the only status writer)**, `expire_lapsed`, `occupancy`, scoped reads |
+| `src/bookings/service.py` | `booking_service` — `bookable_court`, `priced_slots`, availability (carries `convenience_fee_percent`), walk-ins, staff cancel, mark-paid, outcome, closures, `daily_occupancy` (`GET /admin/bookings/occupancy`) |
+| `src/checkouts/` | **The customer's unit of payment** (ADR 0004): `domain/rules.py` (pure — `check_items`, `allocate_fee`, `is_live`, `checkout_display_status`, `undo_kind`), `CheckoutModel`/`RefundModel`, `checkout_repository` (**`set_status` is the only `checkouts.status` writer**, `count_live`), `checkout_service` (create all-or-nothing, pay, cancel). Routes, all `require_customer`: `POST/GET /checkouts/me`, `GET /checkouts/me/{id}`, `POST …/{id}/pay` (opens Maya once), `…/cancel`, `…/refresh-payment` (10/min) |
+| `src/favorites/` | `GET/PUT/DELETE /users/me/favorite-venues[/{venue_id}]` — for the mobile app; no web UI |
+| `src/devtools/demo_seed.py` | `python -m src.devtools.demo_seed --customers N` — verified `customer1..N@example.com`, password `Demo-password-1`; refuses `*_e2e` and Supabase hosts; idempotent |
 | `src/summaries/` | `GET /admin/venues/{id}/courts/summary` (`COURT:Manage`; rate and booked hours null without `PRICE:Manage` / `BOOKING:ReadAny`) and `GET /admin/venues/summary` (`VENUE:Manage`) — one request per Courts/Venues page instead of one per card. Booked hours reuse `occupancy`, minus closures. Its router is included before the venues router so `/venues/summary` is not read as an id |
-| `src/devtools/e2e_seed.py` | `python -m src.devtools.e2e_seed` — the Playwright suite's owner, venues, courts and front desk; exits 2 unless the database name ends in `_e2e` |
+| `src/devtools/e2e_seed.py` | `python -m src.devtools.e2e_seed` — the Playwright suite's owner, venues, courts, front desk and two customers (`customer1.e2e@`, `customer2.e2e@`); exits 2 unless the database name ends in `_e2e` |
 | `src/bookings/http_errors.py` | maps `BookingError.kind` → 422 (`invalid`) / 409 (`conflict`) |
 
-| `src/payments/domain/port.py` | `PaymentProvider` (`create_checkout`, `parse_webhook` — untrusted, `fetch_payment` — authoritative), `ProviderError`, `PaymentNotFound` |
-| `src/payments/adapters/maya_wire.py` | Maya's JSON shapes, `to_pesos`/`from_pesos`, status map — the ONLY place pesos exist |
-| `src/payments/adapters/mock.py` | `MockProvider` — Maya-shaped JSON in memory, read back through `maya_wire` |
+| `src/payments/domain/port.py` | `PaymentProvider` (`create_checkout`, `parse_webhook` — untrusted, `fetch_payment` — authoritative, `void`, `refund`), `ProviderError`, `PaymentNotFound`; `ProviderPayment` carries `status` (one of the five `PaymentOutcome`s), Maya's own `provider_status` and `paid_at` |
+| `src/payments/adapters/maya_wire.py` | Maya's JSON shapes, `to_pesos`/`from_pesos`, the ADR 0004 status map — the ONLY place pesos exist |
+| `src/payments/adapters/mock.py` | `MockProvider` — Maya-shaped JSON in memory, read back through `maya_wire`; `void`/`refund` record into `undone`; `fail_undo` makes them fail |
 | `src/payments/provider.py` | `get_payment_provider` (by `PAYMENT_PROVIDER`; only `mock` today) |
-| `src/payments/service.py` | `payment_service.start_checkout`, **`sync_payment`** (fetch → record event once → apply), late-payment re-acquisition, `needs_resolution` flagging, receipt |
-| `src/payments/controllers/` | `POST /webhooks/maya`; the mock checkout page (only if `MOCK_CHECKOUT_ENABLED`) |
+| `src/payments/service.py` | `payment_service.start_checkout` (one Maya session per checkout, reused), **`sync_payment`** (fetch → record event once → apply to the checkout), late re-acquisition, the simple refund flow, `needs_resolution` flagging, one receipt per checkout |
+| `src/payments/controllers/` | `POST /webhooks/maya`; the mock checkout page with Pay / Decline / Back out / Expire (only if `MOCK_CHECKOUT_ENABLED`) |
 
 **Next:** `MayaProvider` — an httpx adapter over `maya_wire` (public key for
 Create Checkout, secret key for Retrieve Payment, sandbox base URL). Its first
-job is to confirm `maya_wire`'s field names against real sandbox responses.
+job is to confirm `maya_wire`'s field names (`paymentAt` included) against
+real sandbox responses, and to implement `void`/`refund` once Maya enables
+them for the merchant.
 
 ## Payment rules in practice (ADR 0002)
 
 - **Never act on a webhook body.** `sync_payment` takes a payment id and
   asks the provider; the webhook and `refresh-payment` both go through it.
-- **The event insert is the idempotency check** (`"{payment_id}:{status}"`).
-  Do not add an "already processed?" SELECT.
+- **The event insert is the idempotency check** (`"{payment_id}:{provider_status}"`,
+  Maya's own wording). Do not add an "already processed?" SELECT.
+- **One payment attempt per checkout.** `start_checkout` returns the existing
+  session's URL on a repeat: Maya cannot close a session, so a second one
+  could also be paid.
+- **How an outcome lands** (ADR 0004): declined or backed out → every hour
+  reopens at once; paid inside the hold → every group `CONFIRMED/PAID`; paid
+  after the hold ended (or after the customer cancelled) → re-acquire every
+  hour in one savepoint if all are still in the future and free, else **void**
+  (same Manila day) or **refund** the whole payment and book nothing.
+- **The refund flow commits its flag before calling Maya**, so a crash or a
+  failed void/refund leaves the groups in the staff queue ("refund by hand").
 - **Money with no court is flagged, never dropped.** Any paid-but-unhousable
   outcome sets `needs_resolution` and leaves a `[system]` note.
 - **Provider calls happen after the hold commits**, never inside it.
@@ -127,15 +142,19 @@ job is to confirm `maya_wire`'s field names against real sandbox responses.
   group and all its slots together and clears `expires_at` when leaving
   `PENDING` (`ck_pending_has_expiry`). Assigning `group.booking_status`
   anywhere else corrupts availability.
-- **Every `PENDING` read adds `expires_at > now`** — `count_live_holds`,
-  `occupancy`, and `BookingSnapshot.is_live_hold`. Both repository filters
-  are mutation-checked by tests; keep it that way when adding a read.
+- **Every `PENDING` read adds `expires_at > now`** — checkouts included:
+  `checkout_repository.count_live`, `occupancy`, `is_live`,
+  `BookingSnapshot.is_live_hold`. Both repository filters are mutation-checked
+  by tests; keep it that way when adding a read.
+- **A checkout's groups share its `expires_at`** and are held, released and
+  confirmed together. The hold cap counts live checkouts, not groups.
+- **A player booking always has a `checkout_id`** (`ck_checkout_only_on_player_booking`).
 - **The index decides collisions.** Never pre-check a slot with a SELECT;
   `insert` turns `uq_court_slot_active` into 409 `SLOT_UNAVAILABLE`.
 - **Writes act on rows already fetched through a scoped read**, which is why
   `insert`/`set_status`/`expire_lapsed` take no `scope`. Reads take one.
 - Guards take `now` as a parameter; services pass `datetime.now(UTC)`.
-- Known limit: two simultaneous hold requests from one player can exceed
+- Known limit: two simultaneous checkouts from one customer can exceed
   `max_active_holds_per_player` by one. Accepted — it is a soft cap.
 
 ## Venue scope in practice
@@ -185,11 +204,16 @@ job is to confirm `maya_wire`'s field names against real sandbox responses.
   `VENUE_STAFF` → its Front desk, `SUPER_ADMIN` → none). `make_venue` seeds
   the venue's groups.
 - **`provider`** is a fresh `MockProvider` wired into `client`;
-  `tests/payments/helpers.py` — `pay(...)` settles and delivers the webhook,
-  `checkout_id`, `group` (reloads a booking with its slots).
-- `tests/bookings/conftest.py` — a two-venue `world`, `hold(...)`,
+  `tests/payments/helpers.py` — `open_maya(...)` (Continue to Maya), `pay(...)`
+  (opens Maya if needed, settles, delivers the webhook; `paid_at=` for
+  scenario 10), `checkout`, `groups` (reloads a checkout's groups with slots).
+  Set `provider.fail_undo = True` to make void/refund fail.
+- `tests/bookings/conftest.py` — a two-venue `world`, `hold(...)` (a one-item
+  checkout; returns its booking plus `checkout_id` and `checkout`), `items`,
   `set_parameter(...)`; `tests/bookings/helpers.py` — `next_hour`,
-  `insert_booking`. The parameter cache is invalidated before every test.
+  `insert_booking` (gives player bookings a checkout);
+  `tests/checkouts/helpers.py` — `lapse`, `action`, `cell`, `item`. The
+  parameter cache is invalidated before every test.
 - The rate limiter is reset before every test; its buckets are in-process
   and every test client shares one IP.
 - **`db_session`** wraps each test in a transaction that is always rolled
@@ -249,6 +273,7 @@ uv sync
 uv run alembic upgrade head
 uv run uvicorn src.main:app --reload --no-access-log
 uv run python -m src.users.cli create-super-admin --email … --first-name … --last-name …
+uv run python -m src.devtools.demo_seed --customers 3   # demo customers, local only
 uv run ruff format . && uv run ruff check . && uv run mypy src && uv run pytest && uv run vulture
 ```
 
