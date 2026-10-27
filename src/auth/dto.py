@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from src.utils.fields import LookupEmail
+
 # Request schemas forbid unknown fields (asima's forbidNonWhitelisted): a
 # `role` smuggled into a registration body is rejected, not silently dropped.
 Forbid = ConfigDict(extra="forbid")
@@ -28,13 +30,13 @@ class TokenRequest(BaseModel):
 class EmailRequest(BaseModel):
     model_config = Forbid
 
-    email: EmailStr
+    email: LookupEmail
 
 
 class LoginRequest(BaseModel):
     model_config = Forbid
 
-    email: EmailStr
+    email: LookupEmail
     # No length floor here: a password set under an older policy must still
     # be able to log in.
     password: str = Field(min_length=1, max_length=128)

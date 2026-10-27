@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from src.users.domain.groups import GroupKind
 from src.users.persistence.models import UserGroupModel, UserModel
+from src.utils.fields import LookupEmail
 
 
 class GroupRef(BaseModel):
@@ -174,4 +175,4 @@ class MemberAdd(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    email: EmailStr
+    email: LookupEmail
