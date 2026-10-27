@@ -49,6 +49,17 @@ async def test_courts_summary_rates_and_hours(
     assert by_court[idle.id]["rate_centavos"] == 50000  # the seeded default price
 
 
+async def test_courts_summary_gives_no_rate_for_an_inactive_court(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    retired = await make_court(db_session, world.venue_a.id)
+    retired.is_active = False
+
+    response = await courts_summary(client, world.venue_a.id, world.manager_a)
+
+    assert response.json()[0]["rate_centavos"] is None
+
+
 async def test_courts_summary_hides_what_the_caller_cannot_see(
     client: AsyncClient, world: World, db_session: AsyncSession
 ) -> None:

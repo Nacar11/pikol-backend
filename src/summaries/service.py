@@ -36,11 +36,11 @@ class SummaryService:
             )
         return [
             CourtSummary(
-                court_id=i,
-                rate_centavos=None if rates is None else rates[i],
-                booked_hours=None if booked is None else booked.get(i, 0),
+                court_id=c.id,
+                rate_centavos=rates[c.id] if rates is not None and c.is_active else None,
+                booked_hours=None if booked is None else booked.get(c.id, 0),
             )
-            for i in ids
+            for c in courts
         ]
 
     async def venues(

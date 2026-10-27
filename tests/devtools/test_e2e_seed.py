@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.courts.persistence.models import CourtModel
+from src.devtools import e2e_seed
 from src.devtools.e2e_seed import DESK_EMAIL, OWNER_EMAIL, assert_e2e_database, seed
 from src.users.persistence.models import UserGroupMemberModel, UserGroupModel, UserModel
 from src.venues.persistence.models import VenueModel
@@ -42,3 +43,17 @@ async def test_seeds_the_owner_two_venues_and_a_front_desk(db_session: AsyncSess
         .where(UserGroupMemberModel.user_id == desk.id)
     )
     assert list(groups) == ["Front desk"]
+
+
+async def test_main_refuses_before_seeding_anything(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_seed(session: object) -> None:
+        calls.append(session)
+
+    monkeypatch.setattr(e2e_seed, "seed", fake_seed)
+    with pytest.raises(SystemExit) as exit_:
+        await e2e_seed._main("postgresql+asyncpg://p:p@localhost:5433/pikol")
+
+    assert exit_.value.code == 2
+    assert calls == []

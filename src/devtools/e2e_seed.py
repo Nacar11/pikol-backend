@@ -79,7 +79,8 @@ async def seed(session: AsyncSession) -> None:
     )
 
 
-async def _main() -> None:
+async def _main(url: str) -> None:
+    assert_e2e_database(url)
     try:
         async with SessionLocal() as session:
             await seed(session)
@@ -88,7 +89,6 @@ async def _main() -> None:
 
 
 if __name__ == "__main__":
-    assert_e2e_database(get_settings().database_url)
-    asyncio.run(_main())
+    asyncio.run(_main(get_settings().database_url))
     print(f"Seeded {OWNER_EMAIL} and {DESK_EMAIL} (password {PASSWORD}).")
     sys.exit(0)
