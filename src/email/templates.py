@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
@@ -53,31 +55,41 @@ def _pesos(centavos: int) -> str:
     return f"₱{Decimal(centavos) / 100:,.2f}"
 
 
+@dataclass(frozen=True)
+class ReceiptLine:
+    court: str
+    starts_at_manila: datetime
+    hours: int
+    price_centavos: int
+
+
 def receipt_email(
     *,
     to: str,
     first_name: str,
     reference: str,
-    court: str,
-    starts_at_manila: datetime,
-    hours: int,
-    price_centavos: int,
+    venue: str,
+    lines: Sequence[ReceiptLine],
     fee_centavos: int,
     total_centavos: int,
 ) -> EmailMessage:
-    when = starts_at_manila.strftime("%a %d %b %Y, %I:%M %p")
+    """One receipt per checkout: every court and hour it paid for."""
+    booked = "\n".join(
+        f"  {line.court} — {line.starts_at_manila.strftime('%a %d %b %Y, %I:%M %p')}, "
+        f"{line.hours} hour{'s' if line.hours != 1 else ''} — {_pesos(line.price_centavos)}"
+        for line in lines
+    )
     return EmailMessage(
         to=to,
         subject=f"Your Pikol receipt — {reference}",
         body=(
             f"Hi {first_name},\n\n"
-            f"Your booking is confirmed.\n\n"
+            f"Your booking at {venue} is confirmed.\n\n"
             f"Reference:  {reference}\n"
-            f"Court:      {court}\n"
-            f"When:       {when} (Manila), {hours} hour{'s' if hours != 1 else ''}\n\n"
-            f"Court fee:        {_pesos(price_centavos)}\n"
+            f"Times are Manila time.\n\n"
+            f"{booked}\n\n"
             f"Convenience fee:  {_pesos(fee_centavos)}\n"
             f"Total paid:       {_pesos(total_centavos)}\n\n"
-            f"Show this reference at the counter. See you on court!"
+            f"Paid bookings are final. Show this reference at the counter. See you on court!"
         ),
     )

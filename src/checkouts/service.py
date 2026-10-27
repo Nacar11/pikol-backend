@@ -214,6 +214,14 @@ class CheckoutService:
             f"Your {minutes}-minute hold has ended. Pick your hours again.",
         )
 
+    async def reload(self, session: AsyncSession, checkout: CheckoutModel) -> CheckoutModel:
+        """Re-read after another path (the refund flow) committed changes."""
+        await session.refresh(checkout)
+        await session.refresh(checkout, attribute_names=["bookings"])
+        for group in checkout.bookings:
+            await session.refresh(group)
+        return checkout
+
     async def out(self, session: AsyncSession, checkout: CheckoutModel) -> CheckoutOut:
         payment = await payment_repository.latest_for_checkout(session, checkout.id)
         refund = (

@@ -1,13 +1,17 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.access import require_customer
+from src.auth.rate_limit import limiter
 from src.checkouts.dto import CheckoutCreate, CheckoutOut
 from src.checkouts.persistence.repository import checkout_repository
 from src.checkouts.service import checkout_service
 from src.database.session import get_session
+from src.email.port import EmailSender, get_email_sender
 from src.payments.domain.port import PaymentProvider
+from src.payments.persistence.repository import payment_repository
 from src.payments.provider import get_payment_provider
+from src.payments.service import payment_service
 from src.users.persistence.models import UserModel
 from src.utils.api import API_PREFIX
 from src.utils.pagination import Page
@@ -74,4 +78,25 @@ async def cancel(
 ) -> CheckoutOut:
     """Cancel and release hours, while the hold is live. Paid is final."""
     checkout = await checkout_service.cancel(session, customer, checkout_id)
+    return await checkout_service.out(session, checkout)
+
+
+@router.post("/{checkout_id}/refresh-payment")
+@limiter.limit("10/minute")
+async def refresh_payment(
+    request: Request,
+    checkout_id: int,
+    customer: UserModel = Depends(require_customer),
+    session: AsyncSession = Depends(get_session),
+    provider: PaymentProvider = Depends(get_payment_provider),
+    sender: EmailSender = Depends(get_email_sender),
+) -> CheckoutOut:
+    """ "Check again": ask Maya about this checkout's attempt and apply what it
+    says, through the webhook's own idempotent path. Closes the gap when
+    every webhook landed on a sleeping backend (ADR 0002)."""
+    checkout = await checkout_service.get_mine(session, customer, checkout_id)
+    payment = await payment_repository.latest_for_checkout(session, checkout.id)
+    if payment is not None:
+        await payment_service.sync_payment(session, provider, payment.provider_checkout_id, sender)
+        checkout = await checkout_service.reload(session, checkout)
     return await checkout_service.out(session, checkout)
