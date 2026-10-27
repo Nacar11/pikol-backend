@@ -6,21 +6,18 @@ class PaymentProviderName(StrEnum):
     MAYA = "MAYA"
 
 
-class ProviderPaymentStatus(StrEnum):
-    """One provider attempt. booking_groups.payment_status holds the verdict."""
+class PaymentOutcome(StrEnum):
+    """The five statuses a customer sees (ADR 0004). `checkouts.status` holds
+    the verdict; `payments.status` is what the one attempt came to. Maya's own
+    wording is kept beside it in `payments.provider_status`."""
 
     PENDING = "PENDING"
-    PAID = "PAID"
+    SUCCESSFUL = "SUCCESSFUL"
     FAILED = "FAILED"
-    EXPIRED = "EXPIRED"
-    CANCELLED = "CANCELLED"
+    CANCELLED = "CANCELLED"  # backed out, or the hold ended first — may still turn paid
+    REFUNDED = "REFUNDED"  # paid after the hold ended and an hour was taken
 
 
-TERMINAL = frozenset(
-    {
-        ProviderPaymentStatus.PAID,
-        ProviderPaymentStatus.FAILED,
-        ProviderPaymentStatus.EXPIRED,
-        ProviderPaymentStatus.CANCELLED,
-    }
-)
+class RefundKind(StrEnum):
+    VOID = "VOID"  # same Manila day as the payment
+    REFUND = "REFUND"  # from the next day

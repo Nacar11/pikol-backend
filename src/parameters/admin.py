@@ -23,8 +23,8 @@ class ParameterAdminService:
         if row is None:
             raise AppError(404, "NOT_FOUND", "Parameter not found.")
 
-        # Validate the WHOLE model with the candidate value, so a cross-field
-        # rule (min_lead_minutes >= hold_duration_minutes) is enforced here.
+        # Validate the WHOLE model with the candidate value, so any
+        # cross-field rule added later is enforced here too.
         candidate = {**{k: r.value for k, r in rows.items()}, key: value}
         try:
             Parameters.model_validate(candidate)

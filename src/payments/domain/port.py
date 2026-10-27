@@ -8,7 +8,7 @@ provider directly and is the only source of status, amount, and reference.
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from src.payments.domain.enums import PaymentProviderName, ProviderPaymentStatus
+from src.payments.domain.enums import PaymentOutcome, PaymentProviderName
 
 
 class ProviderError(Exception):
@@ -33,7 +33,7 @@ class WebhookNotice:
 @dataclass(frozen=True)
 class ProviderPayment:
     payment_id: str
-    status: ProviderPaymentStatus
+    status: PaymentOutcome
     amount_centavos: int
     reference: str
     raw: dict[str, Any]  # PII — stored, never logged

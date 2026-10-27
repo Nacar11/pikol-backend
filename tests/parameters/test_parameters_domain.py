@@ -38,16 +38,14 @@ def test_non_numeric_value_fails_loudly() -> None:
     assert "convenience_fee_percent" in str(exc.value)
 
 
-def test_min_lead_below_hold_duration_is_rejected() -> None:
-    """Spec section 4.5: were min_lead_minutes lower than hold_duration,
-    a player could hold a slot starting in 5 minutes, pay at minute 12, and
-    have the webhook confirm a session that began 7 minutes earlier."""
-    broken = VALID | {"min_lead_minutes": "10", "hold_duration_minutes": "15"}
+def test_zero_lead_with_a_five_minute_hold_is_valid() -> None:
+    """The owner books 1-2 PM at 12:58 PM (ADR 0004): a hold may run into
+    the hour it holds, so lead time no longer has to cover the hold."""
+    params = Parameters.model_validate(
+        VALID | {"min_lead_minutes": "0", "hold_duration_minutes": "5"}
+    )
 
-    with pytest.raises(ValidationError) as exc:
-        Parameters.model_validate(broken)
-
-    assert "min_lead_minutes" in str(exc.value)
+    assert (params.min_lead_minutes, params.hold_duration_minutes) == (0, 5)
 
 
 def test_missing_parameter_is_rejected() -> None:

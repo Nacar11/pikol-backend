@@ -10,19 +10,19 @@ import json
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from src.payments.domain.enums import ProviderPaymentStatus
+from src.payments.domain.enums import PaymentOutcome
 from src.payments.domain.port import ProviderError, ProviderPayment, WebhookNotice
 
 CURRENCY = "PHP"
 CENTAVO = Decimal("0.01")
 
 MAYA_STATUSES = {
-    "PAYMENT_SUCCESS": ProviderPaymentStatus.PAID,
-    "PAYMENT_FAILED": ProviderPaymentStatus.FAILED,
-    "PAYMENT_EXPIRED": ProviderPaymentStatus.EXPIRED,
-    "PAYMENT_CANCELLED": ProviderPaymentStatus.CANCELLED,
-    "PENDING_TOKEN": ProviderPaymentStatus.PENDING,
-    "PENDING_PAYMENT": ProviderPaymentStatus.PENDING,
+    "PAYMENT_SUCCESS": PaymentOutcome.SUCCESSFUL,
+    "PAYMENT_FAILED": PaymentOutcome.FAILED,
+    "PAYMENT_EXPIRED": PaymentOutcome.CANCELLED,
+    "PAYMENT_CANCELLED": PaymentOutcome.CANCELLED,
+    "PENDING_TOKEN": PaymentOutcome.PENDING,
+    "PENDING_PAYMENT": PaymentOutcome.PENDING,
 }
 
 
@@ -81,7 +81,7 @@ def parse_payment(raw: dict[str, Any]) -> ProviderPayment:
         raise ProviderError(str(exc)) from None
     return ProviderPayment(
         payment_id=payment_id,
-        status=MAYA_STATUSES.get(maya_status, ProviderPaymentStatus.PENDING),
+        status=MAYA_STATUSES.get(maya_status, PaymentOutcome.PENDING),
         amount_centavos=amount_centavos,
         reference=reference,
         raw=raw,

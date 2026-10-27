@@ -59,6 +59,10 @@ class BookingGroupModel(Base):
             "(type = 'PLAYER_BOOKING') = (player_id IS NOT NULL)",
             name="ck_player_only_on_player_booking",
         ),
+        CheckConstraint(
+            "(type = 'PLAYER_BOOKING') = (checkout_id IS NOT NULL)",
+            name="ck_checkout_only_on_player_booking",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -75,6 +79,10 @@ class BookingGroupModel(Base):
     fee_centavos: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     total_centavos: Mapped[int] = mapped_column(Integer, nullable=False)
     payment_method: Mapped[PaymentMethod | None] = mapped_column(payment_method)
+    # The checkout that paid (or tried to pay) for it; player bookings only.
+    checkout_id: Mapped[int | None] = mapped_column(
+        ForeignKey("checkouts.id", ondelete="RESTRICT"), index=True
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     needs_resolution: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=false(), index=True

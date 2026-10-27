@@ -4,7 +4,6 @@ from httpx import AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.parameters.persistence.models import ParameterModel
 from src.parameters.service import parameter_service
 from src.utils.api import API_PREFIX
 from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue
@@ -60,18 +59,11 @@ async def test_patch_updates_value_and_audit(client: AsyncClient, db_session: As
     assert (await parameter_service.get(db_session)).hold_duration_minutes == 10
 
 
-async def test_patch_rejects_cross_field_rule(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_owner_sets_min_lead_to_zero(client: AsyncClient, db_session: AsyncSession) -> None:
     headers = await _admin(db_session, client)
-    before = (await parameter_service.get(db_session)).min_lead_minutes
-    response = await client.patch(f"{URL}/min_lead_minutes", json={"value": "5"}, headers=headers)
-    assert response.status_code == 422
-    assert response.json()["code"] == "INVALID_PARAMETER"
-    assert response.json()["detail"].startswith("min_lead_minutes: ")
-    row = await db_session.get(ParameterModel, "min_lead_minutes", populate_existing=True)
-    assert row is not None
-    assert row.value == str(before)
+    response = await client.patch(f"{URL}/min_lead_minutes", json={"value": "0"}, headers=headers)
+    assert response.status_code == 200, response.text
+    assert (await parameter_service.get(db_session)).min_lead_minutes == 0
 
 
 async def test_patch_rejects_bad_type(client: AsyncClient, db_session: AsyncSession) -> None:

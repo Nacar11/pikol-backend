@@ -1,7 +1,6 @@
 from decimal import Decimal
-from typing import Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class Parameters(BaseModel):
@@ -27,13 +26,3 @@ class Parameters(BaseModel):
     min_lead_minutes: int = Field(ge=0)
     invitation_expiry_days: int = Field(gt=0)
     webhook_payload_retention_days: int = Field(gt=0)
-
-    @model_validator(mode="after")
-    def lead_time_must_cover_the_hold(self) -> Self:
-        if self.min_lead_minutes < self.hold_duration_minutes:
-            raise ValueError(
-                f"min_lead_minutes ({self.min_lead_minutes}) must be >= "
-                f"hold_duration_minutes ({self.hold_duration_minutes}); "
-                f"otherwise a hold can outlive the slot it holds"
-            )
-        return self

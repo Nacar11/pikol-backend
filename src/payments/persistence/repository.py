@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.payments.domain.enums import PaymentProviderName, ProviderPaymentStatus
+from src.payments.domain.enums import PaymentOutcome, PaymentProviderName
 from src.payments.domain.port import CheckoutSession
 from src.payments.persistence.models import EVENT_CONSTRAINT, PaymentModel, WebhookEventModel
 from src.utils.errors import constraint_of
@@ -15,28 +15,29 @@ class PaymentRepository:
         self,
         session: AsyncSession,
         *,
-        booking_group_id: int,
+        checkout_id: int,
         provider: PaymentProviderName,
         checkout: CheckoutSession,
         amount_centavos: int,
     ) -> PaymentModel:
         payment = PaymentModel(
-            booking_group_id=booking_group_id,
+            checkout_id=checkout_id,
             provider=provider,
             provider_checkout_id=checkout.checkout_id,
+            checkout_url=checkout.checkout_url,
             amount_centavos=amount_centavos,
-            status=ProviderPaymentStatus.PENDING,
+            status=PaymentOutcome.PENDING,
         )
         session.add(payment)
         await session.flush()
         return payment
 
-    async def latest_for_group(
-        self, session: AsyncSession, booking_group_id: int
+    async def latest_for_checkout(
+        self, session: AsyncSession, checkout_id: int
     ) -> PaymentModel | None:
         result = await session.execute(
             select(PaymentModel)
-            .where(PaymentModel.booking_group_id == booking_group_id)
+            .where(PaymentModel.checkout_id == checkout_id)
             .order_by(PaymentModel.created_at.desc(), PaymentModel.id.desc())
             .limit(1)
         )

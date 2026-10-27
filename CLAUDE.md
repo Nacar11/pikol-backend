@@ -258,3 +258,8 @@ helpers belong in `tests/`, not `src/`.
 
 CI runs lint, format check, mypy, `alembic upgrade head` against a real
 Postgres service, and the test suite. All five must pass.
+
+## Building unfamiliar features
+
+For unfamiliar features, don't write from scratch — first search GitHub for
+open-source projects, compare approaches, then get started.

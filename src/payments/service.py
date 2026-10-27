@@ -13,7 +13,7 @@ from src.bookings.service_support import snapshot
 from src.config.settings import get_settings
 from src.email.port import EmailSender, send_quietly
 from src.email.templates import receipt_email
-from src.payments.domain.enums import TERMINAL, PaymentProviderName, ProviderPaymentStatus
+from src.payments.domain.enums import PaymentOutcome, PaymentProviderName
 from src.payments.domain.port import (
     PaymentNotFound,
     PaymentProvider,
@@ -90,7 +90,7 @@ class PaymentService:
         except ProviderError:
             raise provider_unavailable() from None
 
-        if payment.status not in TERMINAL:
+        if payment.status == PaymentOutcome.PENDING:
             return  # nothing has happened yet
         event_id = f"{payment.payment_id}:{payment.status}"
         event = await payment_repository.record_event(
@@ -140,9 +140,9 @@ class PaymentService:
         row.provider_payment_id = payment.payment_id
         row.raw_payload = payment.raw
 
-        if payment.status != ProviderPaymentStatus.PAID:
+        if payment.status != PaymentOutcome.SUCCESSFUL:
             if (
-                payment.status == ProviderPaymentStatus.FAILED
+                payment.status == PaymentOutcome.FAILED
                 and group.payment_status == PaymentStatus.UNPAID
             ):
                 group.payment_status = PaymentStatus.FAILED  # still retryable
