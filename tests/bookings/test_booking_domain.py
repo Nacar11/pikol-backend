@@ -10,7 +10,6 @@ from src.bookings.domain.rules import (
     can_cancel_by_player,
     can_cancel_by_staff,
     can_cancel_closure,
-    can_confirm_online_payment,
     can_mark_paid,
     can_set_outcome,
     check_on_the_hour,
@@ -156,14 +155,6 @@ def test_outcome_only_once_started() -> None:
     can_set_outcome(snap(), START)
     with pytest.raises(BookingError):
         can_set_outcome(closure(), START)
-
-
-def test_online_confirmation_needs_a_live_hold() -> None:
-    can_confirm_online_payment(held(NOW + timedelta(seconds=1)), NOW)
-    with pytest.raises(BookingError):
-        can_confirm_online_payment(held(NOW), NOW)
-    with pytest.raises(BookingError):
-        can_confirm_online_payment(walk_in(), NOW)
 
 
 # ── display ──────────────────────────────────────────────────────────────

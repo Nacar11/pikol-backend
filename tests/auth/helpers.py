@@ -3,12 +3,13 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.security import hash_password
 from src.users.domain.groups import GroupKind
 from src.users.persistence.group_repository import group_repository
-from src.users.persistence.models import UserModel
+from src.users.persistence.models import UserGroupModel, UserModel
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
 
@@ -70,7 +71,7 @@ async def make_user(
         group_id: int | None = await group_repository.customer_group_id(session)
     elif role in (RoleCode.VENUE_MANAGER, RoleCode.VENUE_STAFF) and venue_id is not None:
         kind = GroupKind.MASTER if role == RoleCode.VENUE_MANAGER else GroupKind.STAFF
-        group_id = await group_repository.venue_group_id(session, venue_id, kind)
+        group_id = await venue_group_id(session, venue_id, kind)
     else:
         group_id = None
     if group_id is not None:
@@ -98,3 +99,14 @@ async def make_court(
     session.add(court)
     await session.flush()
     return court
+
+
+async def venue_group_id(session: AsyncSession, venue_id: int, kind: GroupKind) -> int:
+    """The venue's master group, or its first staff group: the seeded Front desk."""
+    result = await session.execute(
+        select(UserGroupModel.id)
+        .where(UserGroupModel.venue_id == venue_id, UserGroupModel.kind == kind)
+        .order_by(UserGroupModel.id)
+        .limit(1)
+    )
+    return result.scalar_one()

@@ -30,17 +30,6 @@ class GroupRepository:
         )
         return result.scalar_one()
 
-    async def venue_group_id(self, session: AsyncSession, venue_id: int, kind: GroupKind) -> int:
-        """The venue's master group, or its first staff group (the seeded Front
-        desk) — enough for the role-shaped writers that exist until 0007."""
-        result = await session.execute(
-            select(UserGroupModel.id)
-            .where(UserGroupModel.venue_id == venue_id, UserGroupModel.kind == kind)
-            .order_by(UserGroupModel.id)
-            .limit(1)
-        )
-        return result.scalar_one()
-
     async def seed_venue_groups(
         self, session: AsyncSession, venue_id: int, *, created_by: int | None
     ) -> None:

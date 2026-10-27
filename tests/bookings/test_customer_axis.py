@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.users.domain.groups import GroupKind
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupMemberModel
-from tests.auth.helpers import bearer, login, make_user
+from tests.auth.helpers import bearer, login, make_user, venue_group_id
 from tests.bookings.conftest import ADMIN, BOOKINGS, World
 from tests.bookings.helpers import next_hour
 
@@ -26,9 +26,7 @@ async def test_customer_who_is_also_staff_can_do_both(
     client: AsyncClient, world: World, db_session: AsyncSession
 ) -> None:
     kim = await make_user(db_session)  # a customer
-    front_desk = await group_repository.venue_group_id(
-        db_session, world.a.venue.id, GroupKind.STAFF
-    )
+    front_desk = await venue_group_id(db_session, world.a.venue.id, GroupKind.STAFF)
     await group_repository.add_member(db_session, front_desk, kim.id, added_by=None)
     headers = bearer(await login(client, kim.email))
 
@@ -46,9 +44,7 @@ async def test_leaving_customer_stops_booking_but_not_staff_work(
     client: AsyncClient, world: World, db_session: AsyncSession
 ) -> None:
     kim = await make_user(db_session)
-    front_desk = await group_repository.venue_group_id(
-        db_session, world.a.venue.id, GroupKind.STAFF
-    )
+    front_desk = await venue_group_id(db_session, world.a.venue.id, GroupKind.STAFF)
     await group_repository.add_member(db_session, front_desk, kim.id, added_by=None)
     await db_session.execute(
         delete(UserGroupMemberModel).where(

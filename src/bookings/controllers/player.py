@@ -33,9 +33,7 @@ async def create_hold(
     provider is called."""
     group = await booking_service.create_hold(session, player, body)
     url = await payment_service.start_checkout(session, group, provider)
-    return CheckoutBookingOut(
-        **BookingOut.of(group, datetime.now(UTC)).model_dump(), checkout_url=url
-    )
+    return CheckoutBookingOut.with_url(group, datetime.now(UTC), url)
 
 
 # Identity from the token, never the URL: /bookings/me, not /bookings/{player}.
@@ -88,9 +86,7 @@ async def retry_checkout(
     outage, or a closed tab. Each attempt is its own payments row."""
     group = await booking_service.checkout_target(session, player, booking_id)
     url = await payment_service.start_checkout(session, group, provider)
-    return CheckoutBookingOut(
-        **BookingOut.of(group, datetime.now(UTC)).model_dump(), checkout_url=url
-    )
+    return CheckoutBookingOut.with_url(group, datetime.now(UTC), url)
 
 
 @router.post("/me/{booking_id}/refresh-payment")

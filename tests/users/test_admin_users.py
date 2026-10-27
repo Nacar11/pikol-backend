@@ -12,7 +12,7 @@ from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupModel, UserModel
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
-from tests.auth.helpers import AUTH, RoleCode, bearer, login, make_user, make_venue
+from tests.auth.helpers import AUTH, RoleCode, bearer, login, make_user, make_venue, venue_group_id
 
 ADMIN = f"{API_PREFIX}/admin"
 PERSON = {"email": "new@x.com", "first_name": "New", "last_name": "Staff"}
@@ -46,14 +46,10 @@ async def world(client: AsyncClient, db_session: AsyncSession) -> World:
     w.staff_b = await make_user(db_session, role=RoleCode.VENUE_STAFF, venue_id=w.venue_b.id)
     w.admin = bearer(await login(client, admin.email))
     w.manager_a = bearer(await login(client, w.manager_a_user.email))
-    w.front_desk_a = await group_repository.venue_group_id(
-        db_session, w.venue_a.id, GroupKind.STAFF
-    )
-    w.front_desk_b = await group_repository.venue_group_id(
-        db_session, w.venue_b.id, GroupKind.STAFF
-    )
-    w.master_a = await group_repository.venue_group_id(db_session, w.venue_a.id, GroupKind.MASTER)
-    w.master_b = await group_repository.venue_group_id(db_session, w.venue_b.id, GroupKind.MASTER)
+    w.front_desk_a = await venue_group_id(db_session, w.venue_a.id, GroupKind.STAFF)
+    w.front_desk_b = await venue_group_id(db_session, w.venue_b.id, GroupKind.STAFF)
+    w.master_a = await venue_group_id(db_session, w.venue_a.id, GroupKind.MASTER)
+    w.master_b = await venue_group_id(db_session, w.venue_b.id, GroupKind.MASTER)
     w.invitee = {**PERSON, "group_id": w.front_desk_a}
     return w
 

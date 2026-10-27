@@ -7,9 +7,8 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.domain.groups import GroupKind
-from src.users.persistence.group_repository import group_repository
 from src.utils.api import API_PREFIX
-from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue
+from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue, venue_group_id
 
 ADMIN = f"{API_PREFIX}/admin"
 ME = f"{API_PREFIX}/users/me"
@@ -32,7 +31,7 @@ async def test_owner_master_staff_walkthrough(
 
     # 1. The owner makes Ana master of both venues.
     for venue in (a, b):
-        master = await group_repository.venue_group_id(db_session, venue.id, GroupKind.MASTER)
+        master = await venue_group_id(db_session, venue.id, GroupKind.MASTER)
         added = await client.post(
             f"{ADMIN}/user-groups/{master}/members", headers=owner, json={"email": ana.email}
         )

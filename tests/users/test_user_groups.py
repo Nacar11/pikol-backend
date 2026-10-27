@@ -12,7 +12,7 @@ from src.users.domain.groups import GroupKind
 from src.users.persistence.group_repository import group_repository
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
-from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue
+from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue, venue_group_id
 
 GROUPS = f"{API_PREFIX}/admin/user-groups"
 
@@ -43,9 +43,9 @@ async def world(client: AsyncClient, db_session: AsyncSession) -> World:
         admin=bearer(await login(client, admin.email)),
         master_a=bearer(await login(client, master.email)),
         staff_a=bearer(await login(client, staff.email)),
-        master_group_a=await group_repository.venue_group_id(db_session, a.id, GroupKind.MASTER),
-        front_desk_a=await group_repository.venue_group_id(db_session, a.id, GroupKind.STAFF),
-        front_desk_b=await group_repository.venue_group_id(db_session, b.id, GroupKind.STAFF),
+        master_group_a=await venue_group_id(db_session, a.id, GroupKind.MASTER),
+        front_desk_a=await venue_group_id(db_session, a.id, GroupKind.STAFF),
+        front_desk_b=await venue_group_id(db_session, b.id, GroupKind.STAFF),
         customers=await group_repository.customer_group_id(db_session),
     )
 

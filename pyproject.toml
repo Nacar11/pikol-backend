@@ -24,6 +24,7 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.8",
     "mypy>=1.13",
+    "vulture>=2.16",
 ]
 
 [build-system]
@@ -40,6 +41,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["vulture_whitelist.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
@@ -62,3 +64,8 @@ extend-immutable-calls = [
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
+
+[tool.vulture]
+paths = ["src", "vulture_whitelist.py"]
+exclude = ["src/database/migrations/"]
+min_confidence = 60

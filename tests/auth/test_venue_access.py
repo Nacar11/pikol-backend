@@ -12,7 +12,7 @@ from src.users.domain.roles import PERMISSIONS
 from src.users.persistence.group_repository import group_repository
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
-from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue
+from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue, venue_group_id
 
 ADMIN = f"{API_PREFIX}/admin"
 ME = f"{API_PREFIX}/users/me"
@@ -34,7 +34,7 @@ async def ana(client: AsyncClient, db_session: AsyncSession) -> Ana:
     b = await make_venue(db_session, "Bravo")
     c = await make_venue(db_session, "Charlie")
     user = await make_user(db_session, role=RoleCode.VENUE_MANAGER, venue_id=a.id)
-    front_desk_b = await group_repository.venue_group_id(db_session, b.id, GroupKind.STAFF)
+    front_desk_b = await venue_group_id(db_session, b.id, GroupKind.STAFF)
     await group_repository.add_member(db_session, front_desk_b, user.id, added_by=None)
     return Ana(a, b, c, bearer(await login(client, user.email)))
 
