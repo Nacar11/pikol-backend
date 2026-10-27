@@ -216,6 +216,24 @@ class BookingRepository:
 
     # Player self-service: `player_id` comes from the token and IS the scope.
 
+    async def booked_hours(
+        self,
+        session: AsyncSession,
+        court_ids: Sequence[int],
+        start: datetime,
+        end: datetime,
+        now: datetime,
+        *,
+        scope: VenueScope,
+    ) -> dict[int, int]:
+        """Booked hours per court in [start, end): occupancy minus closures."""
+        taken = await self.occupancy(session, court_ids, start, end, now, scope=scope)
+        hours: dict[int, int] = {}
+        for (court_id, _), kind in taken.items():
+            if kind != BookingType.MAINTENANCE:
+                hours[court_id] = hours.get(court_id, 0) + 1
+        return hours
+
     async def list_for_player(
         self, session: AsyncSession, player_id: int, *, page: int, limit: int
     ) -> tuple[list[BookingGroupModel], int]:

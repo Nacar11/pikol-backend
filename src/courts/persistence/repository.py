@@ -35,6 +35,14 @@ class CourtRepository:
         )
         return list(rows.scalars().all()), total
 
+    async def list_all(self, session: AsyncSession, *, scope: VenueScope) -> list[CourtModel]:
+        rows = await session.execute(
+            select(CourtModel)
+            .where(scope.where(CourtModel.venue_id))
+            .order_by(CourtModel.sort_order, CourtModel.id)
+        )
+        return list(rows.scalars().all())
+
     async def get(
         self, session: AsyncSession, court_id: int, *, scope: VenueScope
     ) -> CourtModel | None:
