@@ -71,9 +71,6 @@ async def remove(
     return await client.delete(f"{GROUPS}/{group_id}/members/{user_id}", headers=headers)
 
 
-# ── Adding ───────────────────────────────────────────────────────────────
-
-
 async def test_customer_becomes_staff_and_stays_a_customer(
     client: AsyncClient, world: World, db_session: AsyncSession
 ) -> None:
@@ -167,9 +164,6 @@ async def test_another_venues_members_are_404(client: AsyncClient, world: World)
     listed = await client.get(f"{GROUPS}/{world.front_desk_b}/members", headers=world.master)
 
     assert listed.status_code == 404
-
-
-# ── Removing ─────────────────────────────────────────────────────────────
 
 
 async def test_master_removes_staff(

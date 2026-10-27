@@ -54,9 +54,6 @@ async def _create(client: AsyncClient, headers: dict[str, str], **body: Any) -> 
     return await client.post(GROUPS, headers=headers, json=body)
 
 
-# ── Reading ──────────────────────────────────────────────────────────────
-
-
 async def test_master_lists_only_their_venue_master_first(
     client: AsyncClient, world: World
 ) -> None:
@@ -99,9 +96,6 @@ async def test_customer_group_is_the_owners_alone(client: AsyncClient, world: Wo
 
 async def test_without_user_manage_groups_are_403(client: AsyncClient, world: World) -> None:
     assert (await client.get(GROUPS, headers=world.staff_a)).status_code == 403
-
-
-# ── Creating ─────────────────────────────────────────────────────────────
 
 
 async def test_master_creates_a_staff_group_at_their_venue(
@@ -156,9 +150,6 @@ async def test_names_are_unique_per_venue_ignoring_case(client: AsyncClient, wor
     assert elsewhere.status_code == same_name_a.status_code == 201
 
 
-# ── Renaming ─────────────────────────────────────────────────────────────
-
-
 async def test_master_renames_a_staff_group(client: AsyncClient, world: World) -> None:
     response = await client.patch(
         f"{GROUPS}/{world.front_desk_a}", headers=world.master_a, json={"name": "Counter"}
@@ -187,9 +178,6 @@ async def test_customer_group_cannot_be_renamed(client: AsyncClient, world: Worl
 
     assert response.status_code == 422
     assert response.json()["code"] == "BUILT_IN_GROUP"
-
-
-# ── Deleting ─────────────────────────────────────────────────────────────
 
 
 async def test_group_with_members_cannot_be_deleted(client: AsyncClient, world: World) -> None:

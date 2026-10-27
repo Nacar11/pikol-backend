@@ -163,8 +163,6 @@ class BookingRepository:
             )
         return list(expired)
 
-    # ── reads ────────────────────────────────────────────────────────────
-
     async def count_live_holds(self, session: AsyncSession, player_id: int, now: datetime) -> int:
         """Unexpired holds only. Counting PENDING alone would include holds
         that lapsed weeks ago, and a player who abandoned checkout three

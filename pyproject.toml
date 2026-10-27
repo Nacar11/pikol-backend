@@ -47,10 +47,7 @@ extend-exclude = ["vulture_whitelist.py"]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
 [tool.ruff.lint.flake8-bugbear]
-# `session: AsyncSession = Depends(get_session)` is THE FastAPI idiom, and
-# B008 ("no function call in an argument default") flags every one of them.
-# Without this the lint gate fails on the first router that takes a
-# dependency — which is all of them, from Phase 2 onward.
+# `x = Depends(...)` defaults are the FastAPI idiom, not B008's mistake.
 extend-immutable-calls = [
     "fastapi.Depends",
     "fastapi.Query",

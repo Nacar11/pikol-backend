@@ -12,15 +12,9 @@ class Parameters(BaseModel):
     money.
     """
 
-    # "ignore", NOT "forbid". The Global Constraint mandating extra="forbid"
-    # is about REQUEST schemas — untrusted input, where an unexpected field
-    # is an attack surface. Here the input is our own table, and forbidding
-    # extras inverts the compatibility it is meant to buy: the normal
-    # migrate-then-deploy order means a new parameter row exists while the
-    # previous release is still serving, and "forbid" would make every
-    # booking 500 until the deploy lands. Missing keys still raise, because
-    # every field below is required — which is the check that actually
-    # matters.
+    # "ignore", not "forbid": after a migration adds a row, the release still
+    # serving must not 500 every booking until the deploy lands. Missing keys
+    # still raise — every field is required.
     model_config = {"extra": "ignore"}
 
     default_slot_price_centavos: int = Field(ge=0)

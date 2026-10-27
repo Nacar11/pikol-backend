@@ -52,9 +52,6 @@ def code_of(call: object) -> str:
     return call.code
 
 
-# ── windows ──────────────────────────────────────────────────────────────
-
-
 def test_slot_starts_are_consecutive_hours() -> None:
     assert slot_starts(START, 3) == [START + timedelta(hours=h) for h in range(3)]
 
@@ -91,9 +88,6 @@ def test_walk_in_window_allows_backdating_within_limit() -> None:
     with pytest.raises(BookingError) as exc:
         check_walk_in_window(NOW - timedelta(days=7, hours=1), NOW, backdate_days=7)
     assert exc.value.code == "TOO_FAR_BACK"
-
-
-# ── guards ───────────────────────────────────────────────────────────────
 
 
 def test_player_may_abandon_live_hold_but_not_lapsed_one() -> None:
@@ -155,9 +149,6 @@ def test_outcome_only_once_started() -> None:
     can_set_outcome(snap(), START)
     with pytest.raises(BookingError):
         can_set_outcome(closure(), START)
-
-
-# ── display ──────────────────────────────────────────────────────────────
 
 
 def test_lapsed_pending_displays_expired() -> None:

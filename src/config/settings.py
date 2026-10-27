@@ -31,8 +31,7 @@ class Settings(BaseSettings):
     # Where email links point. No trailing slash — links are built as
     # f"{frontend_base_url}/verify-email?token=...".
     frontend_base_url: str = "http://localhost:3000"
-    # "console" logs each email (development); "memory" collects them for
-    # tests. A real sender arrives before go-live (Phase 9).
+    # "console" logs each email (development); "memory" collects them for tests.
     email_provider: Literal["console", "memory"] = "console"
     rate_limit_enabled: bool = True
 

@@ -238,18 +238,7 @@ class BookingService:
         can_cancel_by_player(
             snapshot(group), now, cutoff_minutes=params.cancellation_cutoff_minutes
         )
-        await booking_repository.set_status(
-            session,
-            group,
-            BookingStatus.CANCELLED,
-            cancelled_at=now,
-            cancelled_by_user_id=player.id,
-            cancellation_reason=reason or PLAYER_CANCEL_REASON,
-        )
-        await session.commit()
-        return group
-
-    # ── staff ────────────────────────────────────────────────────────────
+        return await self._cancel(session, group, player, reason or PLAYER_CANCEL_REASON, now)
 
     async def get_scoped(
         self, session: AsyncSession, booking_id: int, *, scope: VenueScope
@@ -302,16 +291,7 @@ class BookingService:
     ) -> BookingGroupModel:
         group = await self.get_scoped(session, booking_id, scope=scope)
         can_cancel_by_staff(snapshot(group))
-        await booking_repository.set_status(
-            session,
-            group,
-            BookingStatus.CANCELLED,
-            cancelled_at=datetime.now(UTC),
-            cancelled_by_user_id=staff.id,
-            cancellation_reason=reason,
-        )
-        await session.commit()
-        return group
+        return await self._cancel(session, group, staff, reason, datetime.now(UTC))
 
     async def mark_paid(
         self,
@@ -364,8 +344,6 @@ class BookingService:
         await session.commit()
         await session.refresh(group)
         return group
-
-    # ── closures ─────────────────────────────────────────────────────────
 
     async def close_courts(
         self, session: AsyncSession, staff: UserModel, body: ClosureRequest, *, scope: VenueScope
@@ -429,12 +407,22 @@ class BookingService:
     ) -> BookingGroupModel:
         group = await self.get_scoped(session, closure_id, scope=scope)
         can_cancel_closure(snapshot(group))
+        return await self._cancel(session, group, staff, reason, datetime.now(UTC))
+
+    async def _cancel(
+        self,
+        session: AsyncSession,
+        group: BookingGroupModel,
+        by: UserModel,
+        reason: str,
+        now: datetime,
+    ) -> BookingGroupModel:
         await booking_repository.set_status(
             session,
             group,
             BookingStatus.CANCELLED,
-            cancelled_at=datetime.now(UTC),
-            cancelled_by_user_id=staff.id,
+            cancelled_at=now,
+            cancelled_by_user_id=by.id,
             cancellation_reason=reason,
         )
         await session.commit()

@@ -60,8 +60,6 @@ class MockProvider:
             raise PaymentNotFound(payment_id)
         return parse_payment(self._payments[payment_id])
 
-    # ── the mock's own controls ──────────────────────────────────────────
-
     def exists(self, checkout_id: str) -> bool:
         return checkout_id in self._payments
 

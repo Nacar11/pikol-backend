@@ -182,8 +182,6 @@ class GroupService:
         await session.refresh(group)
         return group
 
-    # ── Members ──────────────────────────────────────────────────────────
-
     async def _fillable(
         self, session: AsyncSession, caller: UserModel, group_id: int, *, scope: VenueScope
     ) -> UserGroupModel:

@@ -53,9 +53,6 @@ def _invalid(code: str, detail: str) -> BookingError:
     return BookingError(code, detail, "invalid")
 
 
-# ── windows ──────────────────────────────────────────────────────────────
-
-
 def slot_starts(starts_at: datetime, hours: int) -> list[datetime]:
     return [starts_at + h * SLOT for h in range(hours)]
 
@@ -83,9 +80,6 @@ def check_player_window(
 def check_walk_in_window(starts_at: datetime, now: datetime, *, backdate_days: int) -> None:
     if starts_at < now - timedelta(days=backdate_days):
         raise _invalid("TOO_FAR_BACK", f"Walk-ins can be recorded up to {backdate_days} days back.")
-
-
-# ── transition guards ────────────────────────────────────────────────────
 
 
 def can_cancel_by_player(b: BookingSnapshot, now: datetime, *, cutoff_minutes: int) -> None:
@@ -141,9 +135,6 @@ def can_start_checkout(b: BookingSnapshot, now: datetime) -> None:
         or b.payment_status == PaymentStatus.PAID
     ):
         raise _conflict("HOLD_NOT_LIVE", "There is no live hold to pay for.")
-
-
-# ── display ──────────────────────────────────────────────────────────────
 
 
 def display_status(b: BookingSnapshot, now: datetime) -> DisplayStatus:

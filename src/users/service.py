@@ -52,8 +52,6 @@ class UserService:
         await auth_service.revoke_all(session, user.id)
         await session.commit()
 
-    # ── Admin ────────────────────────────────────────────────────────────
-
     async def _issue_invitation(self, session: AsyncSession, user: UserModel) -> Invitation:
         days = (await parameter_service.get(session)).invitation_expiry_days
         token = await auth_service.issue_token(
