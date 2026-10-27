@@ -7,14 +7,11 @@ from src.bookings.domain.enums import BookingStatus, BookingType, PaymentMethod,
 from src.bookings.domain.errors import BookingError
 from src.bookings.domain.rules import (
     SLOT,
-    can_cancel_by_player,
     can_cancel_by_staff,
     can_cancel_closure,
     can_mark_paid,
     can_set_outcome,
-    can_start_checkout,
     check_on_the_hour,
-    check_player_window,
     check_walk_in_window,
     slot_starts,
 )
@@ -26,7 +23,6 @@ from src.bookings.dto import (
     GridCourt,
     GridSlot,
     GridStatus,
-    HoldRequest,
     WalkInRequest,
 )
 from src.bookings.persistence.models import BookingGroupModel
@@ -36,7 +32,6 @@ from src.courts.persistence.models import CourtModel
 from src.courts.persistence.repository import court_repository
 from src.courts.service import court_service
 from src.parameters.service import parameter_service
-from src.pricing.domain.pricing import convenience_fee_centavos
 from src.pricing.service import pricing_service
 from src.users.persistence.models import UserModel
 from src.utils.errors import AppError
@@ -46,9 +41,6 @@ from src.venues.service import venue_service
 # Players book across every venue; the court's own venue is checked for
 # being active, not for belonging to the caller.
 CATALOG = VenueScope.everything()
-
-
-PLAYER_CANCEL_REASON = "Cancelled by player"
 
 
 def court_not_found() -> AppError:
@@ -70,66 +62,14 @@ class BookingService:
         await venue_service.get(session, court.venue_id, scope=scope, active_only=True)
         return court
 
-    async def create_hold(
-        self, session: AsyncSession, player: UserModel, body: HoldRequest
-    ) -> BookingGroupModel:
-        """POST /bookings — one transaction, in the order of spec §5.3."""
-        now = datetime.now(UTC)
-        params = await parameter_service.get(session)
-        court = await self.bookable_court(session, body.court_id, scope=CATALOG)
-
-        check_on_the_hour(body.starts_at)
-        check_player_window(
-            body.starts_at,
-            body.hours,
-            now,
-            min_lead_minutes=params.min_lead_minutes,
-            horizon_days=params.booking_horizon_days,
-        )
-        if (
-            await booking_repository.count_live_holds(session, player.id, now)
-            >= params.max_active_holds_per_player
-        ):
-            raise AppError(
-                409,
-                "HOLD_LIMIT",
-                f"You already have {params.max_active_holds_per_player} unpaid holds. "
-                f"Pay for or cancel one first.",
-            )
-
-        starts, slot_prices, price = await self._priced_slots(session, court.id, body)
-        fee = convenience_fee_centavos(price, params.convenience_fee_percent)
-
-        await booking_repository.expire_lapsed(session, court.id, starts, now)
-        group = await booking_repository.insert(
-            session,
-            fields={
-                "court_id": court.id,
-                "player_id": player.id,
-                "type": BookingType.PLAYER_BOOKING,
-                "booking_status": BookingStatus.PENDING,
-                "payment_status": PaymentStatus.UNPAID,
-                "price_centavos": price,
-                "fee_centavos": fee,
-                "total_centavos": price + fee,
-                "expires_at": now + timedelta(minutes=params.hold_duration_minutes),
-                "created_by_user_id": player.id,
-            },
-            slot_prices=slot_prices,
-        )
-        await session.commit()
-        return group
-
-    async def _priced_slots(
-        self, session: AsyncSession, court_id: int, body: HoldRequest
-    ) -> tuple[list[datetime], list[tuple[datetime, int]], int]:
+    async def priced_slots(
+        self, session: AsyncSession, court_id: int, starts_at: datetime, hours: int
+    ) -> list[tuple[datetime, int]]:
         """Each hour's price from the court's rules, frozen into the booking."""
-        starts = slot_starts(body.starts_at, body.hours)
         resolver = (await pricing_service.resolvers_for(session, [court_id], scope=CATALOG))[
             court_id
         ]
-        slot_prices = [(s, resolver.price_at(s)) for s in starts]
-        return starts, slot_prices, sum(p for _, p in slot_prices)
+        return [(s, resolver.price_at(s)) for s in slot_starts(starts_at, hours)]
 
     async def daily_occupancy(
         self, session: AsyncSession, venue_id: int, first_day: date, days: int, *, scope: VenueScope
@@ -176,9 +116,8 @@ class BookingService:
             session, court_ids, start, end, now, scope=CATALOG
         )
         resolvers = await pricing_service.resolvers_for(session, court_ids, scope=CATALOG)
-        bookable_from = now + timedelta(
-            minutes=(await parameter_service.get(session)).min_lead_minutes
-        )
+        params = await parameter_service.get(session)
+        bookable_from = now + timedelta(minutes=params.min_lead_minutes)
 
         def status(court_id: int, starts_at: datetime) -> GridStatus:
             occupant = taken.get((court_id, starts_at))
@@ -193,6 +132,7 @@ class BookingService:
         return Availability(
             venue_id=venue_id,
             date=day,
+            convenience_fee_percent=params.convenience_fee_percent,
             courts=[
                 GridCourt(
                     court_id=c.id,
@@ -210,35 +150,6 @@ class BookingService:
                 for c in courts
             ],
         )
-
-    async def get_for_player(
-        self, session: AsyncSession, player: UserModel, booking_id: int
-    ) -> BookingGroupModel:
-        group = await booking_repository.get_for_player(session, booking_id, player.id)
-        if group is None:
-            raise booking_not_found()  # someone else's booking looks exactly like none
-        return group
-
-    async def checkout_target(
-        self, session: AsyncSession, player: UserModel, booking_id: int
-    ) -> BookingGroupModel:
-        """The player's own live, unpaid hold — for a retry checkout."""
-        group = await self.get_for_player(session, player, booking_id)
-        can_start_checkout(snapshot(group), datetime.now(UTC))
-        return group
-
-    async def cancel_by_player(
-        self, session: AsyncSession, player: UserModel, booking_id: int, reason: str | None
-    ) -> BookingGroupModel:
-        """Abandon a live hold, or cancel a confirmed booking before the
-        cutoff. No refund (spec decision 9); the slot returns to inventory."""
-        now = datetime.now(UTC)
-        group = await self.get_for_player(session, player, booking_id)
-        params = await parameter_service.get(session)
-        can_cancel_by_player(
-            snapshot(group), now, cutoff_minutes=params.cancellation_cutoff_minutes
-        )
-        return await self._cancel(session, group, player, reason or PLAYER_CANCEL_REASON, now)
 
     async def get_scoped(
         self, session: AsyncSession, booking_id: int, *, scope: VenueScope
@@ -258,7 +169,9 @@ class BookingService:
         court = await self.bookable_court(session, body.court_id, scope=scope)
         check_on_the_hour(body.starts_at)
         check_walk_in_window(body.starts_at, now, backdate_days=params.staff_backdate_days)
-        starts, slot_prices, price = await self._priced_slots(session, court.id, body)
+        slot_prices = await self.priced_slots(session, court.id, body.starts_at, body.hours)
+        starts = [s for s, _ in slot_prices]
+        price = sum(p for _, p in slot_prices)
 
         await booking_repository.expire_lapsed(session, court.id, starts, now)
         group = await booking_repository.insert(

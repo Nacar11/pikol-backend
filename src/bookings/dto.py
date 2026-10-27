@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -71,12 +72,6 @@ class ResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     resolution: str = Field(min_length=1, max_length=500)
-
-
-class PlayerCancelRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    reason: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class SlotOut(BaseModel):
@@ -169,6 +164,9 @@ class DayOccupancy(BaseModel):
 class Availability(BaseModel):
     venue_id: int
     date: date
+    # So the customer's bar can show the fee before Pay now. A string in
+    # JSON; the checkout freezes the real fee.
+    convenience_fee_percent: Decimal
     courts: list[GridCourt]
 
 
@@ -197,14 +195,3 @@ class AdminBookingOut(BookingOut):
             ),
             created_by_user_id=group.created_by_user_id,
         )
-
-
-class CheckoutBookingOut(BookingOut):
-    """A hold plus where to pay for it. The redirect back NEVER confirms the
-    booking — the webhook does (spec §5.3)."""
-
-    checkout_url: str
-
-    @classmethod
-    def with_url(cls, group: BookingGroupModel, now: datetime, url: str) -> "CheckoutBookingOut":
-        return cls(**BookingOut.of(group, now).model_dump(), checkout_url=url)

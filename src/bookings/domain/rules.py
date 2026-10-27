@@ -82,21 +82,6 @@ def check_walk_in_window(starts_at: datetime, now: datetime, *, backdate_days: i
         raise _invalid("TOO_FAR_BACK", f"Walk-ins can be recorded up to {backdate_days} days back.")
 
 
-def can_cancel_by_player(b: BookingSnapshot, now: datetime, *, cutoff_minutes: int) -> None:
-    if b.type != BookingType.PLAYER_BOOKING:
-        raise _conflict("NOT_CANCELLABLE", "This booking cannot be cancelled here.")
-    if b.booking_status == BookingStatus.PENDING:
-        if not b.is_live_hold(now):
-            raise _conflict("NOT_CANCELLABLE", "This hold has already expired.")
-        return
-    if b.booking_status != BookingStatus.CONFIRMED:
-        raise _conflict("NOT_CANCELLABLE", "This booking can no longer be cancelled.")
-    if now >= b.starts_at - timedelta(minutes=cutoff_minutes):
-        raise _conflict(
-            "CANCELLATION_CUTOFF_PASSED", "It is too close to the start time to cancel."
-        )
-
-
 def can_cancel_by_staff(b: BookingSnapshot) -> None:
     if b.type == BookingType.MAINTENANCE:
         raise _conflict("IS_CLOSURE", "Reopen a closure through the closures route.")
@@ -125,16 +110,6 @@ def can_set_outcome(b: BookingSnapshot, now: datetime) -> None:
         raise _conflict("NO_OUTCOME", "Only a confirmed booking can be marked played or no-show.")
     if b.starts_at > now:
         raise _conflict("NOT_STARTED", "This booking has not started yet.")
-
-
-def can_start_checkout(b: BookingSnapshot, now: datetime) -> None:
-    """A checkout is only worth opening for a live, unpaid player hold."""
-    if (
-        b.type != BookingType.PLAYER_BOOKING
-        or not b.is_live_hold(now)
-        or b.payment_status == PaymentStatus.PAID
-    ):
-        raise _conflict("HOLD_NOT_LIVE", "There is no live hold to pay for.")
 
 
 def display_status(b: BookingSnapshot, now: datetime) -> DisplayStatus:

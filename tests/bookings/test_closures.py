@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.bookings.domain.enums import BookingType
 from src.bookings.persistence.models import BookingGroupModel
 from src.utils.api import API_PREFIX
-from tests.bookings.conftest import ADMIN, BOOKINGS, World, hold, manila_date
+from tests.bookings.conftest import ADMIN, CHECKOUTS, World, hold, items, manila_date
 from tests.bookings.helpers import insert_booking, next_hour
 
 CLOSURES = f"{ADMIN}/closures"
@@ -52,9 +52,9 @@ async def test_closure_blocks_bookings_and_shows_closed(client: AsyncClient, wor
         start + timedelta(hours=3),
     )
     booking = await client.post(
-        BOOKINGS,
+        CHECKOUTS,
         headers=world.player,
-        json={"court_id": world.a.court.id, "starts_at": (start + timedelta(hours=2)).isoformat()},
+        json=items(world.a.court.id, start + timedelta(hours=2)),
     )
     grid = await client.get(
         f"{API_PREFIX}/availability",

@@ -7,7 +7,6 @@ from src.bookings.domain.enums import BookingStatus, BookingType, PaymentStatus
 from src.bookings.domain.errors import BookingError
 from src.bookings.domain.rules import (
     BookingSnapshot,
-    can_cancel_by_player,
     can_cancel_by_staff,
     can_cancel_closure,
     can_mark_paid,
@@ -90,26 +89,6 @@ def test_walk_in_window_allows_backdating_within_limit() -> None:
     assert exc.value.code == "TOO_FAR_BACK"
 
 
-def test_player_may_abandon_live_hold_but_not_lapsed_one() -> None:
-    can_cancel_by_player(held(NOW + timedelta(minutes=1)), NOW, cutoff_minutes=0)
-    with pytest.raises(BookingError):
-        can_cancel_by_player(held(NOW), NOW, cutoff_minutes=0)
-
-
-def test_player_cancel_respects_cutoff() -> None:
-    can_cancel_by_player(snap(), NOW, cutoff_minutes=60)  # 113 min before start
-    with pytest.raises(BookingError) as exc:
-        can_cancel_by_player(snap(), NOW, cutoff_minutes=120)
-    assert exc.value.code == "CANCELLATION_CUTOFF_PASSED"
-
-
-@pytest.mark.parametrize("status", [BookingStatus.COMPLETED, BookingStatus.CANCELLED])
-def test_player_cannot_cancel_finished_booking(status: BookingStatus) -> None:
-    with pytest.raises(BookingError) as exc:
-        can_cancel_by_player(snap(status=status), NOW, cutoff_minutes=0)
-    assert exc.value.kind == "conflict"
-
-
 def test_staff_cancel_confirmed_only_and_never_a_closure() -> None:
     can_cancel_by_staff(walk_in())
     for denied in (closure(), held(NOW + timedelta(hours=1)), snap(status=BookingStatus.NO_SHOW)):
@@ -169,17 +148,3 @@ def test_reference_code_shape() -> None:
     codes = {new_reference_code() for _ in range(200)}
     assert all(re.fullmatch(r"PKL-[A-HJ-KMNP-TV-Z2-9]{5}", c) for c in codes)
     assert len(codes) > 190
-
-
-def test_checkout_needs_a_live_unpaid_hold() -> None:
-    from src.bookings.domain.rules import can_start_checkout
-
-    can_start_checkout(held(NOW + timedelta(minutes=1)), NOW)
-    for denied in (
-        held(NOW),  # lapsed
-        snap(),  # confirmed and paid
-        walk_in(),
-    ):
-        with pytest.raises(BookingError) as exc:
-            can_start_checkout(denied, NOW)
-        assert exc.value.code == "HOLD_NOT_LIVE"

@@ -163,20 +163,6 @@ class BookingRepository:
             )
         return list(expired)
 
-    async def count_live_holds(self, session: AsyncSession, player_id: int, now: datetime) -> int:
-        """Unexpired holds only. Counting PENDING alone would include holds
-        that lapsed weeks ago, and a player who abandoned checkout three
-        times would be locked out forever (spec §4.3)."""
-        return (
-            await session.execute(
-                select(func.count()).where(
-                    BookingGroupModel.player_id == player_id,
-                    BookingGroupModel.booking_status == BookingStatus.PENDING,
-                    BookingGroupModel.expires_at > now,
-                )
-            )
-        ).scalar_one()
-
     async def occupancy(
         self,
         session: AsyncSession,
@@ -212,8 +198,6 @@ class BookingRepository:
         )
         return {(court_id, starts_at): type_ for court_id, starts_at, type_ in rows}
 
-    # Player self-service: `player_id` comes from the token and IS the scope.
-
     async def booked_hours(
         self,
         session: AsyncSession,
@@ -231,30 +215,6 @@ class BookingRepository:
             if kind != BookingType.MAINTENANCE:
                 hours[court_id] = hours.get(court_id, 0) + 1
         return hours
-
-    async def list_for_player(
-        self, session: AsyncSession, player_id: int, *, page: int, limit: int
-    ) -> tuple[list[BookingGroupModel], int]:
-        mine = BookingGroupModel.player_id == player_id
-        total = (await session.execute(select(func.count()).where(mine))).scalar_one()
-        rows = await session.execute(
-            select(BookingGroupModel)
-            .where(mine)
-            .order_by(BookingGroupModel.created_at.desc(), BookingGroupModel.id.desc())
-            .offset((page - 1) * limit)
-            .limit(limit)
-        )
-        return list(rows.scalars().unique().all()), total
-
-    async def get_for_player(
-        self, session: AsyncSession, booking_id: int, player_id: int
-    ) -> BookingGroupModel | None:
-        result = await session.execute(
-            select(BookingGroupModel).where(
-                BookingGroupModel.id == booking_id, BookingGroupModel.player_id == player_id
-            )
-        )
-        return result.unique().scalar_one_or_none()
 
     # Staff reads: venue-owned, so `scope` is keyword-only with no default,
     # applied to the booking's own court's venue.

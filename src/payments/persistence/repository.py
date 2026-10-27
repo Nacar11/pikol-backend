@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.checkouts.persistence.models import RefundModel
 from src.payments.domain.enums import PaymentOutcome, PaymentProviderName
 from src.payments.domain.port import CheckoutSession
 from src.payments.persistence.models import EVENT_CONSTRAINT, PaymentModel, WebhookEventModel
@@ -42,6 +43,11 @@ class PaymentRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def refund_for(self, session: AsyncSession, payment_id: int) -> RefundModel | None:
+        return (
+            await session.execute(select(RefundModel).where(RefundModel.payment_id == payment_id))
+        ).scalar_one_or_none()
 
     async def by_checkout_id(
         self, session: AsyncSession, provider: PaymentProviderName, checkout_id: str

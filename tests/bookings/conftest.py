@@ -16,7 +16,7 @@ from src.utils.time import MANILA
 from src.venues.persistence.models import VenueModel
 from tests.auth.helpers import RoleCode, bearer, login, make_court, make_user, make_venue
 
-BOOKINGS = f"{API_PREFIX}/bookings"
+CHECKOUTS = f"{API_PREFIX}/checkouts/me"
 ADMIN = f"{API_PREFIX}/admin"
 
 
@@ -78,14 +78,18 @@ def manila_date(at: datetime) -> date:
     return at.astimezone(MANILA).date()
 
 
+def items(court_id: int, starts_at: datetime, hours: int = 1) -> dict[str, Any]:
+    """A one-item checkout body."""
+    return {"items": [{"court_id": court_id, "starts_at": starts_at.isoformat(), "hours": hours}]}
+
+
 async def hold(
     client: AsyncClient, headers: dict[str, str], court_id: int, starts_at: datetime, hours: int = 1
 ) -> dict[str, Any]:
-    response = await client.post(
-        BOOKINGS,
-        headers=headers,
-        json={"court_id": court_id, "starts_at": starts_at.isoformat(), "hours": hours},
-    )
+    """Hold hours through a one-item checkout. Returns its booking, plus
+    `checkout_id` and the whole `checkout`, so `booking["id"]` stays the
+    booking group's id."""
+    response = await client.post(CHECKOUTS, headers=headers, json=items(court_id, starts_at, hours))
     assert response.status_code == 201, response.text
-    body: dict[str, Any] = response.json()
-    return body
+    checkout: dict[str, Any] = response.json()
+    return {**checkout["bookings"][0], "checkout_id": checkout["id"], "checkout": checkout}

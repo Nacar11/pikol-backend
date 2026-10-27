@@ -9,15 +9,13 @@ from src.users.domain.groups import GroupKind
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupMemberModel
 from tests.auth.helpers import bearer, login, make_user, venue_group_id
-from tests.bookings.conftest import ADMIN, BOOKINGS, World
+from tests.bookings.conftest import ADMIN, CHECKOUTS, World, items
 from tests.bookings.helpers import next_hour
 
 
 async def _hold(client: AsyncClient, headers: dict[str, str], court_id: int, day: int) -> int:
     response = await client.post(
-        BOOKINGS,
-        headers=headers,
-        json={"court_id": court_id, "starts_at": next_hour(days=day).isoformat()},
+        CHECKOUTS, headers=headers, json=items(court_id, next_hour(days=day))
     )
     return response.status_code
 

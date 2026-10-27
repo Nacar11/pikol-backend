@@ -19,7 +19,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.auth.helpers import RoleCode, bearer, login, make_court, make_user, make_venue
-from tests.bookings.conftest import ADMIN, BOOKINGS
+from tests.bookings.conftest import ADMIN, CHECKOUTS, items
 from tests.bookings.helpers import next_hour
 
 
@@ -41,21 +41,16 @@ async def _cold_court(
     return court_id, player_headers, staff_headers
 
 
-async def test_hold_serialises_court_and_venue_with_a_cold_identity_map(
+async def test_checkout_serialises_court_and_venue_with_a_cold_identity_map(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     court_id, player, _ = await _cold_court(client, db_session)
 
-    response = await client.post(
-        BOOKINGS,
-        headers=player,
-        json={"court_id": court_id, "starts_at": next_hour().isoformat(), "hours": 1},
-    )
+    response = await client.post(CHECKOUTS, headers=player, json=items(court_id, next_hour()))
 
     assert response.status_code == 201, response.text
     body = response.json()
-    assert (body["court_name"], body["venue_name"]) == ("Cold 1", "Cold")
-    assert body["checkout_url"]
+    assert (body["bookings"][0]["court_name"], body["venue_name"]) == ("Cold 1", "Cold")
 
 
 async def test_walk_in_serialises_court_and_venue_with_a_cold_identity_map(
