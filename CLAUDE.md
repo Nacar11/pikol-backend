@@ -95,6 +95,8 @@ conflate them.
 | `src/bookings/domain/` | enums, `BookingError(code, detail, kind)`, `BookingSnapshot`, every transition guard, `display_status`, `new_reference_code` — pure |
 | `src/bookings/persistence/repository.py` | `booking_repository` — `insert`, **`set_status` (the only status writer)**, `expire_lapsed`, `count_live_holds`, `occupancy`, scoped and per-player reads |
 | `src/bookings/service.py` | `booking_service` — holds, availability, player cancel, walk-ins, staff cancel, mark-paid, outcome, closures, `daily_occupancy` (`GET /admin/bookings/occupancy`) |
+| `src/summaries/` | `GET /admin/venues/{id}/courts/summary` (`COURT:Manage`; rate and booked hours null without `PRICE:Manage` / `BOOKING:ReadAny`) and `GET /admin/venues/summary` (`VENUE:Manage`) — one request per Courts/Venues page instead of one per card. Booked hours reuse `occupancy`, minus closures. Its router is included before the venues router so `/venues/summary` is not read as an id |
+| `src/devtools/e2e_seed.py` | `python -m src.devtools.e2e_seed` — the Playwright suite's owner, venues, courts and front desk; exits 2 unless the database name ends in `_e2e` |
 | `src/bookings/http_errors.py` | maps `BookingError.kind` → 422 (`invalid`) / 409 (`conflict`) |
 
 | `src/payments/domain/port.py` | `PaymentProvider` (`create_checkout`, `parse_webhook` — untrusted, `fetch_payment` — authoritative), `ProviderError`, `PaymentNotFound` |
@@ -247,8 +249,12 @@ uv sync
 uv run alembic upgrade head
 uv run uvicorn src.main:app --reload --no-access-log
 uv run python -m src.users.cli create-super-admin --email … --first-name … --last-name …
-uv run ruff format . && uv run ruff check . && uv run mypy src && uv run pytest
+uv run ruff format . && uv run ruff check . && uv run mypy src && uv run pytest && uv run vulture
 ```
+
+`uv run vulture` finds dead code; names only the framework uses (routes,
+validators, Pydantic and ORM fields) live in `vulture_whitelist.py`. Test-only
+helpers belong in `tests/`, not `src/`.
 
 CI runs lint, format check, mypy, `alembic upgrade head` against a real
 Postgres service, and the test suite. All five must pass.
