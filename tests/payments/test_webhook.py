@@ -15,7 +15,15 @@ from tests.payments.helpers import WEBHOOK, checkout_id, group, pay
 
 
 async def _events(session: AsyncSession) -> int:
-    return (await session.execute(select(func.count()).select_from(WebhookEventModel))).scalar_one()
+    """Events this test recorded. now() is the transaction's start, so rows
+    already committed to a developer's database fall outside it."""
+    return (
+        await session.execute(
+            select(func.count())
+            .select_from(WebhookEventModel)
+            .where(WebhookEventModel.received_at >= func.now())
+        )
+    ).scalar_one()
 
 
 async def test_success_confirms_and_sends_one_receipt(

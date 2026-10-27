@@ -66,7 +66,15 @@ async def test_provider_outage_is_502_and_keeps_the_hold(
 
     assert response.status_code == 502
     assert response.json()["code"] == "PAYMENT_PROVIDER_UNAVAILABLE"
-    held = (await db_session.execute(select(BookingGroupModel))).scalars().all()
+    held = (
+        (
+            await db_session.execute(
+                select(BookingGroupModel).where(BookingGroupModel.court_id == world.a.court.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert [g.booking_status for g in held] == ["PENDING"]
 
 
