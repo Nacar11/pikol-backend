@@ -3,7 +3,7 @@
 FastAPI + SQLAlchemy 2.0 (async) + Postgres. The court booking API for Pikol.
 
 System-level brief: `../CLAUDE.md` — booking vocabulary, the two status axes,
-the PENDING trap, venue scoping, the role/permission map, and deployment
+the PENDING trap, venue scoping, user groups and permissions, and deployment
 rules. Read it first; this file covers only what is specific to this repo.
 
 Design: `../docs/plans/2026-09-09-court-booking-system-design.md`.
@@ -58,7 +58,7 @@ objects with no SQLAlchemy imports. CRUD features (`venues`, `courts`,
 rules (prices, windows, caps — in Postgres, tunable without a deploy). Do not
 conflate them.
 
-## What exists now (Phase 5 complete on the mock; Maya adapter pending)
+## What exists now (user groups complete; Maya adapter pending)
 
 | Module | Provides |
 |---|---|
@@ -73,14 +73,19 @@ conflate them.
 | `src/utils/errors.py` | `AppError(status, code, detail)`, `register_exception_handlers(app)`, `ErrorResponse` |
 | `src/utils/pagination.py` | `Page[T]`, `Page.of(...)` |
 | `src/utils/time.py` | `MANILA`, `manila_day_bounds(day)` |
-| `src/auth/dependencies.py` | `get_current_user`, `require_permission(code)`, `require_super_admin`, `forbidden()` |
-| `src/auth/scope.py` | `VenueScope(all_venues, venue_id).where(column)`, `get_venue_scope` |
+| `src/auth/dependencies.py` | `get_current_user`, `require_super_admin`, `forbidden()` |
+| `src/auth/access.py` | `get_venue_access` (`X-Venue-ID` → `VenueAccess(scope, permissions, is_master)`, per venue, never summed), `require_permission(code)`, `get_venue_scope`, `require_customer` (Customer-group membership) |
+| `src/auth/scope.py` | `VenueScope(all_venues, venue_id).where(column)` |
 | `src/auth/security.py` | argon2 passwords, HS256 access/refresh JWTs, hashed single-use email tokens |
 | `src/auth/service.py` | `auth_service` — register, verify, login, refresh rotation, logout, reset, accept invite; `insert_user` |
 | `src/auth/rate_limit.py` | `limiter` (slowapi), `LOGIN_LIMIT`, `EMAIL_LIMIT` |
 | `src/email/port.py` | `EmailMessage`, `EmailSender`, `get_email_sender`, `send_quietly` |
-| `src/users/domain/roles.py` | `RoleCode`, `PERMISSIONS`, `ROLE_PERMISSIONS` — the migration seeds from these |
-| `src/users/persistence/repository.py` | `user_repository` — `list`/`get_scoped` take `scope=` with no default |
+| `src/users/domain/roles.py` | `PERMISSIONS` — every code |
+| `src/users/domain/groups.py` | `GroupKind`, `OWNER_ONLY`, the Venue master / Front desk seeds |
+| `src/users/persistence/repository.py` | `user_repository` — `list`/`get_scoped` take `scope=` with no default; "at a venue" means holding one of its groups |
+| `src/users/persistence/group_repository.py` | `group_repository` — memberships, codes per venue, `seed_venue_groups` (called in the venue's own transaction), scoped group reads |
+| `src/users/group_service.py` | `group_service` — every escalation rule for groups, permissions and members (ADR 0003). Routes: `/admin/user-groups` (+ `/permissions`, `/members`), `/admin/permissions`, all `USER:Manage` |
+| `src/users/controllers/me.py` | `/users/me` (+ `is_customer`), `/users/me/permissions` (per `X-Venue-ID`, union without), `/users/me/venues` |
 | `src/users/cli.py` | `create-super-admin` — the only way a SUPER_ADMIN is made |
 | `src/venues/` | `venue_repository`, `venue_service`; admin routes (`VENUE:Manage`) and the catalog (`GET /venues`, `/venues/{id}/courts`) |
 | `src/courts/` | `CourtModel`, `court_repository`, `court_service` (`get` → scoped 404); admin routes (`COURT:Manage`) |
@@ -89,7 +94,7 @@ conflate them.
 
 | `src/bookings/domain/` | enums, `BookingError(code, detail, kind)`, `BookingSnapshot`, every transition guard, `display_status`, `new_reference_code` — pure |
 | `src/bookings/persistence/repository.py` | `booking_repository` — `insert`, **`set_status` (the only status writer)**, `expire_lapsed`, `count_live_holds`, `occupancy`, scoped and per-player reads |
-| `src/bookings/service.py` | `booking_service` — holds, availability, player cancel, walk-ins, staff cancel, mark-paid, outcome, closures |
+| `src/bookings/service.py` | `booking_service` — holds, availability, player cancel, walk-ins, staff cancel, mark-paid, outcome, closures, `daily_occupancy` (`GET /admin/bookings/occupancy`) |
 | `src/bookings/http_errors.py` | maps `BookingError.kind` → 422 (`invalid`) / 409 (`conflict`) |
 
 | `src/payments/domain/port.py` | `PaymentProvider` (`create_checkout`, `parse_webhook` — untrusted, `fetch_payment` — authoritative), `ProviderError`, `PaymentNotFound` |
@@ -102,7 +107,6 @@ conflate them.
 **Next:** `MayaProvider` — an httpx adapter over `maya_wire` (public key for
 Create Checkout, secret key for Retrieve Payment, sandbox base URL). Its first
 job is to confirm `maya_wire`'s field names against real sandbox responses.
-Then Phase 6 (frontend).
 
 ## Payment rules in practice (ADR 0002)
 
@@ -154,8 +158,15 @@ Then Phase 6 (frontend).
 - **Refresh replay revokes the whole family** (asima ADR 0002). Password
   change, password reset, logout, and deactivation all revoke every refresh
   token.
-- **Privilege fields come from the token or the endpoint, never the body.**
-  The manager invite route has no role or venue field at all.
+- **Privilege fields come from the token, the active venue or the endpoint,
+  never the body.** A non-owner's new group takes the active venue and kind
+  STAFF; a body naming either is a 422. Invites name a `group_id`, whose
+  venue is the group's.
+- **Permissions are per venue** (`get_venue_access`): never authorise on the
+  union across a person's venues, which only `/users/me/permissions` without a
+  header returns, for coarse client checks.
+- **Every escalation rule has a test that fails when it is removed** (ADR
+  0003). Keep it that way when adding one.
 - **Email is sent after commit, via `send_quietly`**, which logs and swallows
   failures — every email has a resend path.
 - **`EMAIL_PROVIDER=console` logs live tokens.** Development only; Phase 9
@@ -166,7 +177,11 @@ Then Phase 6 (frontend).
 - `pytest-asyncio` is in **auto** mode; async tests need no decorator.
 - **`outbox`** is a `MemoryEmailSender` wired into `client`; read emailed
   links back from `outbox.outbox[-1].body`.
-- **`tests/auth/helpers.py`** — `make_user`, `make_venue`, `login`, `bearer`.
+- **`tests/auth/helpers.py`** — `make_user`, `make_venue`, `login`, `bearer`,
+  and `RoleCode`: a test-only shorthand for which group `make_user` joins
+  (`PLAYER` → Customer, `VENUE_MANAGER` → the venue's master group,
+  `VENUE_STAFF` → its Front desk, `SUPER_ADMIN` → none). `make_venue` seeds
+  the venue's groups.
 - **`provider`** is a fresh `MockProvider` wired into `client`;
   `tests/payments/helpers.py` — `pay(...)` settles and delivers the webhook,
   `checkout_id`, `group` (reloads a booking with its slots).
@@ -187,6 +202,10 @@ Then Phase 6 (frontend).
   presents as flakiness.
 
 ## Tooling gotchas (each one has already cost a red gate)
+
+- **A migration never imports a constant that may change.** 0002 and 0006
+  carry frozen copies of what they seeded; when 0007 deleted the role
+  constants, an import would have broken every fresh `alembic upgrade`.
 
 - **`ruff check .` covers `tests/` too.** Imports appended to the bottom of an
   existing test file trip `E402`/`I001`.
