@@ -5,7 +5,15 @@ from src.auth.access import VenueAccess, get_venue_access, get_venue_scope, requ
 from src.auth.scope import VenueScope
 from src.database.session import get_session
 from src.users.domain.groups import OWNER_ONLY, GroupKind
-from src.users.dto import GroupCreate, GroupOut, GroupPermissionsUpdate, GroupUpdate, PermissionOut
+from src.users.dto import (
+    GroupCreate,
+    GroupOut,
+    GroupPermissionsUpdate,
+    GroupUpdate,
+    MemberAdd,
+    MemberOut,
+    PermissionOut,
+)
 from src.users.group_service import group_service
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserModel
@@ -100,6 +108,45 @@ async def set_group_permissions(
     they do not hold stay as they were (ADR 0003)."""
     group = await group_service.set_permissions(session, caller, group_id, body, access=access)
     return await group_service.out(session, caller, group)
+
+
+@router.get("/{group_id}/members")
+async def list_members(
+    group_id: int,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    _: UserModel = Depends(manage_groups),
+    scope: VenueScope = Depends(get_venue_scope),
+    session: AsyncSession = Depends(get_session),
+) -> Page[MemberOut]:
+    members, total = await group_service.members(
+        session, group_id, scope=scope, page=page, limit=limit
+    )
+    return Page.of(members, total=total, page=page, limit=limit)
+
+
+@router.post("/{group_id}/members", status_code=status.HTTP_201_CREATED)
+async def add_member(
+    group_id: int,
+    body: MemberAdd,
+    caller: UserModel = Depends(manage_groups),
+    scope: VenueScope = Depends(get_venue_scope),
+    session: AsyncSession = Depends(get_session),
+) -> MemberOut:
+    """Add an existing account by exact email — a customer becomes staff here,
+    and stays a customer (ADR 0003)."""
+    return await group_service.add_member(session, caller, group_id, body, scope=scope)
+
+
+@router.delete("/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_member(
+    group_id: int,
+    user_id: int,
+    caller: UserModel = Depends(manage_groups),
+    access: VenueAccess = Depends(get_venue_access),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    await group_service.remove_member(session, caller, group_id, user_id, access=access)
 
 
 @permissions_router.get("")

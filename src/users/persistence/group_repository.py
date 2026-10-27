@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import case, delete, func, insert, literal, or_, select
@@ -14,6 +15,7 @@ from src.users.persistence.models import (
     PermissionModel,
     UserGroupMemberModel,
     UserGroupModel,
+    UserModel,
     user_group_permissions,
 )
 
@@ -269,13 +271,62 @@ class GroupRepository:
         )
         return list(rows.scalars())
 
+    async def list_members(
+        self, session: AsyncSession, group_id: int, *, page: int, limit: int
+    ) -> tuple[list[tuple[UserModel, datetime, bool]], int]:
+        """Live members by name, each with when they were added and whether
+        their invitation is still pending (no password yet) — computed in SQL
+        so the deferred hash is never loaded."""
+        filters = (
+            UserGroupMemberModel.group_id == group_id,
+            UserModel.deleted_at.is_(None),
+        )
+        joined = select(
+            UserModel, UserGroupMemberModel.created_at, UserModel.password_hash.is_(None)
+        ).join(UserGroupMemberModel, UserGroupMemberModel.user_id == UserModel.id)
+        total = (
+            await session.execute(
+                select(func.count())
+                .select_from(UserGroupMemberModel)
+                .join(UserModel, UserModel.id == UserGroupMemberModel.user_id)
+                .where(*filters)
+            )
+        ).scalar_one()
+        rows = await session.execute(
+            joined.where(*filters)
+            .order_by(UserModel.first_name, UserModel.last_name, UserModel.id)
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+        return [(user, added, pending) for user, added, pending in rows.tuples()], total
+
+    async def customers_among(self, session: AsyncSession, user_ids: list[int]) -> set[int]:
+        rows = await session.execute(
+            select(UserGroupMemberModel.user_id)
+            .join(UserGroupModel, UserGroupModel.id == UserGroupMemberModel.group_id)
+            .where(
+                UserGroupMemberModel.user_id.in_(user_ids),
+                UserGroupModel.kind == GroupKind.CUSTOMER,
+            )
+        )
+        return set(rows.scalars())
+
+    async def remove_member(self, session: AsyncSession, group_id: int, user_id: int) -> bool:
+        result = await session.execute(
+            delete(UserGroupMemberModel).where(
+                UserGroupMemberModel.group_id == group_id, UserGroupMemberModel.user_id == user_id
+            )
+        )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
     async def add_member(
         self, session: AsyncSession, group_id: int, user_id: int, *, added_by: int | None
-    ) -> None:
-        session.add(
-            UserGroupMemberModel(group_id=group_id, user_id=user_id, added_by_user_id=added_by)
-        )
+    ) -> UserGroupMemberModel:
+        member = UserGroupMemberModel(group_id=group_id, user_id=user_id, added_by_user_id=added_by)
+        session.add(member)
         await session.flush()
+        await session.refresh(member, ["created_at"])
+        return member
 
 
 group_repository = GroupRepository()

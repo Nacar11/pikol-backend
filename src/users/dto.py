@@ -152,3 +152,26 @@ class PermissionOut(BaseModel):
     action: str
     description: str | None
     owner_only: bool
+
+
+class MemberOut(BaseModel):
+    """`pending_invite`: invited but no password set yet. `is_customer` backs
+    the "also a customer" tag."""
+
+    user_id: int
+    email: str
+    first_name: str
+    last_name: str
+    is_active: bool
+    pending_invite: bool
+    is_customer: bool
+    added_at: datetime
+
+
+class MemberAdd(BaseModel):
+    """By exact email: finds one person and lists nobody else, so the
+    picker can never become a directory of every customer (ADR 0003)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr

@@ -8,9 +8,17 @@ from src.auth.access import VenueAccess
 from src.auth.scope import VenueScope
 from src.users.domain.groups import OWNER_ONLY, GroupKind
 from src.users.domain.roles import PERMISSIONS
-from src.users.dto import GroupCreate, GroupOut, GroupPermissionsUpdate, GroupUpdate
+from src.users.dto import (
+    GroupCreate,
+    GroupOut,
+    GroupPermissionsUpdate,
+    GroupUpdate,
+    MemberAdd,
+    MemberOut,
+)
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupModel, UserModel
+from src.users.persistence.repository import user_repository
 from src.utils.errors import AppError
 
 NAME_CONSTRAINT = "uq_user_groups_venue_name"
@@ -173,6 +181,102 @@ class GroupService:
         await session.commit()
         await session.refresh(group)
         return group
+
+    # ── Members ──────────────────────────────────────────────────────────
+
+    async def _fillable(
+        self, session: AsyncSession, caller: UserModel, group_id: int, *, scope: VenueScope
+    ) -> UserGroupModel:
+        """A group whose membership the caller may change. Master and Customer
+        membership is the owner's alone; Customer is already a 404 to anyone
+        else, so only the master check remains to say out loud."""
+        group = await self.get(session, group_id, scope=scope)
+        if group.kind != GroupKind.STAFF and not caller.system_admin:
+            raise owner_only("Only the owner can change who is a venue master.")
+        return group
+
+    async def members(
+        self,
+        session: AsyncSession,
+        group_id: int,
+        *,
+        scope: VenueScope,
+        page: int,
+        limit: int,
+    ) -> tuple[list[MemberOut], int]:
+        group = await self.get(session, group_id, scope=scope)
+        rows, total = await group_repository.list_members(session, group.id, page=page, limit=limit)
+        customers = await group_repository.customers_among(session, [u.id for u, _, _ in rows])
+        return [
+            MemberOut(
+                user_id=user.id,
+                email=user.email,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                is_active=user.is_active,
+                pending_invite=pending,
+                is_customer=user.id in customers,
+                added_at=added,
+            )
+            for user, added, pending in rows
+        ], total
+
+    async def add_member(
+        self,
+        session: AsyncSession,
+        caller: UserModel,
+        group_id: int,
+        body: MemberAdd,
+        *,
+        scope: VenueScope,
+    ) -> MemberOut:
+        group = await self._fillable(session, caller, group_id, scope=scope)
+        user = await user_repository.get_by_email(session, body.email)
+        if user is None:
+            # Missing and deleted accounts read the same.
+            raise AppError(404, "NOT_FOUND", "No account with that email.")
+        await session.refresh(user, ["password_hash"])
+        pending = user.password_hash is None
+        if not user.is_active and not pending:
+            raise AppError(422, "USER_INACTIVE", "That account is deactivated.")
+        if await group_repository.is_member(session, group.id, user.id):
+            raise AppError(409, "ALREADY_MEMBER", "They are already in this group.")
+        member = await group_repository.add_member(session, group.id, user.id, added_by=caller.id)
+        await session.commit()
+        return MemberOut(
+            user_id=user.id,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            is_active=user.is_active,
+            pending_invite=pending,
+            is_customer=await group_repository.is_customer(session, user.id),
+            added_at=member.created_at,
+        )
+
+    async def remove_member(
+        self,
+        session: AsyncSession,
+        caller: UserModel,
+        group_id: int,
+        user_id: int,
+        *,
+        access: VenueAccess,
+    ) -> None:
+        group = await self._fillable(session, caller, group_id, scope=access.scope)
+        if not caller.system_admin:
+            assert group.venue_id is not None  # STAFF groups always have one
+            if not access.is_master and await group_repository.is_master_at(
+                session, user_id, group.venue_id
+            ):
+                raise owner_only("Only the owner or a venue master can remove a venue master.")
+            if user_id == caller.id:
+                codes = (await group_repository.codes_by_group(session, [group.id]))[group.id]
+                if "USER:Manage" in codes:
+                    await self._refuse_self_lockout(session, caller, group, access)
+        if not await group_repository.remove_member(session, group.id, user_id):
+            raise AppError(404, "NOT_FOUND", "They are not in this group.")
+        await session.commit()
 
     async def _refuse_self_lockout(
         self, session: AsyncSession, caller: UserModel, group: UserGroupModel, access: VenueAccess
