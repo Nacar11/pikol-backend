@@ -10,12 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.courts.persistence.models import CourtModel
 from src.parameters.persistence.models import ParameterModel
 from src.parameters.service import parameter_service
-from src.users.domain.roles import RoleCode
 from src.users.persistence.models import UserModel
 from src.utils.api import API_PREFIX
 from src.utils.time import MANILA
 from src.venues.persistence.models import VenueModel
-from tests.auth.helpers import bearer, login, make_court, make_user, make_venue
+from tests.auth.helpers import RoleCode, bearer, login, make_court, make_user, make_venue
 
 BOOKINGS = f"{API_PREFIX}/bookings"
 ADMIN = f"{API_PREFIX}/admin"

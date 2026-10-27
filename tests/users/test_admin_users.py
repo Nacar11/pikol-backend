@@ -8,12 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.email.adapters import MemoryEmailSender
 from src.users.domain.groups import GroupKind
-from src.users.domain.roles import RoleCode
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupModel, UserModel
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
-from tests.auth.helpers import AUTH, bearer, login, make_user, make_venue
+from tests.auth.helpers import AUTH, RoleCode, bearer, login, make_user, make_venue
 
 ADMIN = f"{API_PREFIX}/admin"
 PERSON = {"email": "new@x.com", "first_name": "New", "last_name": "Staff"}

@@ -18,8 +18,7 @@ from datetime import timedelta
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.users.domain.roles import RoleCode
-from tests.auth.helpers import bearer, login, make_court, make_user, make_venue
+from tests.auth.helpers import RoleCode, bearer, login, make_court, make_user, make_venue
 from tests.bookings.conftest import ADMIN, BOOKINGS
 from tests.bookings.helpers import next_hour
 

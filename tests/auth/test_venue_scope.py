@@ -2,9 +2,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.scope import VenueScope
-from src.users.domain.roles import RoleCode
 from src.users.persistence.repository import user_repository
-from tests.auth.helpers import make_user, make_venue
+from tests.auth.helpers import RoleCode, make_user, make_venue
 
 
 async def test_scope_is_mandatory(db_session: AsyncSession) -> None:

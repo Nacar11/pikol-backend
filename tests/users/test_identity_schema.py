@@ -3,43 +3,37 @@ from sqlalchemy import inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.users.domain.roles import ROLE_PERMISSIONS, RoleCode
-from src.users.persistence.models import RoleModel, UserModel
-
-
-async def _player_role_id(session: AsyncSession) -> int:
-    return (
-        await session.execute(select(RoleModel.id).where(RoleModel.code == RoleCode.PLAYER))
-    ).scalar_one()
+from src.users.domain.roles import PERMISSIONS
+from src.users.persistence.models import UserModel
 
 
 async def _add_user(session: AsyncSession, email: str) -> UserModel:
-    user = UserModel(
-        email=email, first_name="Jane", last_name="Doe", role_id=await _player_role_id(session)
-    )
+    user = UserModel(email=email, first_name="Jane", last_name="Doe")
     session.add(user)
     await session.flush()
     return user
 
 
-async def test_seeded_matrix_matches_spec(db_session: AsyncSession) -> None:
-    rows = await db_session.execute(
+async def test_permissions_table_matches_the_code(db_session: AsyncSession) -> None:
+    rows = await db_session.execute(text("SELECT code FROM permissions"))
+
+    assert set(rows.scalars()) == set(PERMISSIONS)
+
+
+async def test_roles_are_gone(db_session: AsyncSession) -> None:
+    """ADR 0003: groups carry every permission; nothing stores a role."""
+    tables = await db_session.execute(
+        text("SELECT to_regclass('roles'), to_regclass('role_permissions')")
+    )
+    columns = await db_session.execute(
         text(
-            "SELECT r.code, p.code FROM roles r "
-            "LEFT JOIN role_permissions rp ON rp.role_id = r.id "
-            "LEFT JOIN permissions p ON p.id = rp.permission_id"
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'users' AND column_name IN ('role_id', 'venue_id')"
         )
     )
-    seeded: dict[str, set[str]] = {}
-    for role, permission in rows:
-        seeded.setdefault(role, set())
-        if permission is not None:
-            seeded[role].add(permission)
 
-    assert seeded == {role.value: set(codes) for role, codes in ROLE_PERMISSIONS.items()}
-    assert "USER:Manage" in seeded["VENUE_MANAGER"]
-    assert "PARAMETER:Manage" not in seeded["VENUE_MANAGER"]
-    assert "VENUE:Manage" not in seeded["VENUE_MANAGER"]
+    assert tables.one() == (None, None)
+    assert columns.all() == []
 
 
 async def test_email_unique_case_insensitively(db_session: AsyncSession) -> None:

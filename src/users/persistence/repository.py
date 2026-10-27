@@ -3,8 +3,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import ColumnElement, exists, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.users.domain.roles import RoleCode
-from src.users.persistence.models import RoleModel, UserGroupMemberModel, UserGroupModel, UserModel
+from src.users.persistence.models import UserGroupMemberModel, UserGroupModel, UserModel
 
 if TYPE_CHECKING:
     from src.auth.scope import VenueScope
@@ -27,10 +26,6 @@ class UserRepository:
             select(UserModel).where(UserModel.id == user_id, UserModel.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
-
-    async def role_id(self, session: AsyncSession, code: RoleCode) -> int:
-        result = await session.execute(select(RoleModel.id).where(RoleModel.code == code))
-        return result.scalar_one()
 
     # The two methods below read venue-owned data, so `scope` is keyword-only
     # with NO default — see VenueScope.

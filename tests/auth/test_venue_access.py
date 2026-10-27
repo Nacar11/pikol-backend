@@ -8,11 +8,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.domain.groups import FRONT_DESK_CODES, MASTER_DEFAULT_CODES, GroupKind
-from src.users.domain.roles import PERMISSIONS, RoleCode
+from src.users.domain.roles import PERMISSIONS
 from src.users.persistence.group_repository import group_repository
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
-from tests.auth.helpers import bearer, login, make_user, make_venue
+from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue
 
 ADMIN = f"{API_PREFIX}/admin"
 ME = f"{API_PREFIX}/users/me"

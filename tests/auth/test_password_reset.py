@@ -5,8 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import get_settings
 from src.email.adapters import MemoryEmailSender
-from src.users.domain.roles import RoleCode
-from tests.auth.helpers import AUTH, PASSWORD, login, make_user, make_venue
+from tests.auth.helpers import AUTH, PASSWORD, RoleCode, login, make_user, make_venue
 
 
 def _reset_token(outbox: MemoryEmailSender) -> str:

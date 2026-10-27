@@ -6,9 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.parameters.persistence.models import ParameterModel
 from src.parameters.service import parameter_service
-from src.users.domain.roles import RoleCode
 from src.utils.api import API_PREFIX
-from tests.auth.helpers import bearer, login, make_user, make_venue
+from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue
 
 URL = f"{API_PREFIX}/admin/parameters"
 

@@ -11,18 +11,29 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-from src.users.domain.groups import (
-    CUSTOMER_GROUP_NAME,
-    FRONT_DESK_CODES,
-    FRONT_DESK_GROUP_NAME,
-    MASTER_DEFAULT_CODES,
-    MASTER_GROUP_NAME,
-)
-
 revision = "0006_user_groups"
 down_revision = "0005_payments"
 branch_labels = None
 depends_on = None
+
+# Frozen copies of src/users/domain/groups.py as written: a migration must not
+# change meaning when the live defaults are edited later.
+CUSTOMER_GROUP_NAME = "Customer"
+MASTER_GROUP_NAME = "Venue master"
+FRONT_DESK_GROUP_NAME = "Front desk"
+_BOOKING_OPS = frozenset(
+    {
+        "BOOKING:ReadAny",
+        "BOOKING:CreateWalkIn",
+        "BOOKING:MarkPaid",
+        "BOOKING:SetOutcome",
+        "BOOKING:CancelAny",
+    }
+)
+MASTER_DEFAULT_CODES = frozenset(
+    {"COURT:Manage", "PRICE:Manage", "CLOSURE:Manage", "USER:Manage"} | _BOOKING_OPS
+)
+FRONT_DESK_CODES = frozenset({"CLOSURE:Manage"} | _BOOKING_OPS)
 
 group_kind = postgresql.ENUM("CUSTOMER", "MASTER", "STAFF", name="group_kind", create_type=False)
 

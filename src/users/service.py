@@ -9,7 +9,6 @@ from src.auth.security import hash_password, verify_password
 from src.auth.service import auth_service, insert_user
 from src.parameters.service import parameter_service
 from src.users.domain.groups import GroupKind
-from src.users.domain.roles import RoleCode
 from src.users.dto import AdminUserUpdate, PasswordChangeRequest, ProfileUpdate, UserOut
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupModel, UserModel
@@ -41,7 +40,6 @@ class UserService:
         for field, value in body.model_dump(exclude_unset=True).items():
             setattr(user, field, value)
         await session.commit()
-        await session.refresh(user, ["role"])
         return user
 
     async def change_password(
@@ -97,7 +95,6 @@ class UserService:
         already have one is the members API, which never reveals more than
         an exact email match.
         """
-        assert group.venue_id is not None  # invitable_group excludes Customer
         try:
             user = await insert_user(
                 session,
@@ -107,14 +104,6 @@ class UserService:
                     first_name=first_name,
                     last_name=last_name,
                     mobile=mobile,
-                    # The retired columns, still NOT NULL until migration 0007.
-                    role_id=await user_repository.role_id(
-                        session,
-                        RoleCode.VENUE_MANAGER
-                        if group.kind == GroupKind.MASTER
-                        else RoleCode.VENUE_STAFF,
-                    ),
-                    venue_id=group.venue_id,
                     is_active=False,
                 ),
             )
@@ -199,7 +188,6 @@ class UserService:
                 )
             )
         await session.commit()
-        await session.refresh(target, ["role"])
         return target
 
     async def _pending_invitee(

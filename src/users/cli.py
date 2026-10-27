@@ -18,9 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.security import hash_password
 from src.auth.service import insert_user
 from src.database.session import SessionLocal, engine
-from src.users.domain.roles import RoleCode
 from src.users.persistence.models import UserModel
-from src.users.persistence.repository import user_repository
 from src.utils.errors import AppError
 
 MIN_PASSWORD = 8
@@ -36,7 +34,6 @@ async def create_super_admin(
             password_hash=hash_password(password),
             first_name=first_name,
             last_name=last_name,
-            role_id=await user_repository.role_id(session, RoleCode.SUPER_ADMIN),
             system_admin=True,
             is_active=True,
             email_verified_at=datetime.now(UTC),

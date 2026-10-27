@@ -4,16 +4,60 @@ Revision ID: 0002_identity
 Revises: 0001_parameters
 """
 
+from enum import StrEnum
+
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
-
-from src.users.domain.roles import PERMISSIONS, ROLE_PERMISSIONS, RoleCode
 
 revision = "0002_identity"
 down_revision = "0001_parameters"
 branch_labels = None
 depends_on = None
+
+
+# Frozen copies of what src/users/domain/roles.py held when this migration was
+# written. A migration must not import code that later changes: 0007 retired
+# roles and deleted these constants (ADR 0003), and this file must still run.
+class RoleCode(StrEnum):
+    SUPER_ADMIN = "SUPER_ADMIN"
+    VENUE_MANAGER = "VENUE_MANAGER"
+    VENUE_STAFF = "VENUE_STAFF"
+    PLAYER = "PLAYER"
+
+
+PERMISSIONS: tuple[str, ...] = (
+    "VENUE:Manage",
+    "COURT:Manage",
+    "PRICE:Manage",
+    "CLOSURE:Manage",
+    "BOOKING:ReadAny",
+    "BOOKING:CreateWalkIn",
+    "BOOKING:MarkPaid",
+    "BOOKING:SetOutcome",
+    "BOOKING:CancelAny",
+    "USER:Manage",
+    "PARAMETER:Manage",
+)
+
+_BOOKING_OPS = frozenset(
+    {
+        "BOOKING:ReadAny",
+        "BOOKING:CreateWalkIn",
+        "BOOKING:MarkPaid",
+        "BOOKING:SetOutcome",
+        "BOOKING:CancelAny",
+    }
+)
+
+ROLE_PERMISSIONS: dict[RoleCode, frozenset[str]] = {
+    RoleCode.SUPER_ADMIN: frozenset(),
+    RoleCode.VENUE_MANAGER: frozenset(
+        {"COURT:Manage", "PRICE:Manage", "CLOSURE:Manage", "USER:Manage"} | _BOOKING_OPS
+    ),
+    RoleCode.VENUE_STAFF: frozenset({"CLOSURE:Manage"} | _BOOKING_OPS),
+    RoleCode.PLAYER: frozenset(),
+}
 
 ROLE_NAMES = {
     RoleCode.SUPER_ADMIN: ("Super admin", "All venues. The owner."),

@@ -13,39 +13,11 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import ENUM
-from sqlalchemy.orm import Mapped, deferred, mapped_column, relationship
+from sqlalchemy.orm import Mapped, deferred, mapped_column
 
-import src.venues.persistence.models  # noqa: F401  (users.venue_id FK target)
+import src.venues.persistence.models  # noqa: F401  (user_groups.venue_id FK target)
 from src.database.base import Base
 from src.users.domain.groups import GroupKind
-
-role_permissions = Table(
-    "role_permissions",
-    Base.metadata,
-    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
-    Column(
-        "permission_id",
-        Integer,
-        ForeignKey("permissions.id", ondelete="CASCADE"),
-        primary_key=True,
-        index=True,
-    ),
-)
-
-
-class RoleModel(Base):
-    __tablename__ = "roles"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(64), nullable=False)
-    description: Mapped[str | None] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
 
 
 class PermissionModel(Base):
@@ -120,7 +92,8 @@ class UserGroupMemberModel(Base):
 
 
 class UserModel(Base):
-    """A player is role = PLAYER, not a separate identity system (spec §6.1)."""
+    """Who someone is. What they may do lives in user_group_members: Customer
+    for booking as yourself, a venue's groups for staff work (ADR 0003)."""
 
     __tablename__ = "users"
 
@@ -133,14 +106,7 @@ class UserModel(Base):
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
     mobile: Mapped[str | None] = mapped_column(String(32))
-    role_id: Mapped[int] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    # NULL for SUPER_ADMIN and PLAYER. The entire basis of VenueScope.
-    venue_id: Mapped[int | None] = mapped_column(
-        ForeignKey("venues.id", ondelete="RESTRICT"), index=True
-    )
-    # The unconditional bypass axis, orthogonal to role (asima ADR 0001).
+    # The unconditional bypass axis, orthogonal to groups (asima ADR 0001).
     system_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=false(), index=True
@@ -154,8 +120,6 @@ class UserModel(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-    role: Mapped[RoleModel] = relationship(lazy="joined")
 
 
 # No unique on the column: uniqueness is LOWER(email) among non-deleted rows

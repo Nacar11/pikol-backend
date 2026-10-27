@@ -10,9 +10,8 @@ from src.auth.dependencies import get_current_user
 from src.auth.persistence.models import RefreshTokenModel
 from src.database.session import get_session
 from src.main import create_app
-from src.users.domain.roles import RoleCode
 from src.users.persistence.models import UserModel
-from tests.auth.helpers import AUTH, PASSWORD, bearer, login, make_user
+from tests.auth.helpers import AUTH, PASSWORD, RoleCode, bearer, login, make_user
 
 
 @pytest.fixture

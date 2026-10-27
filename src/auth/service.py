@@ -18,7 +18,6 @@ from src.auth.security import (
     verify_password,
 )
 from src.config.settings import get_settings
-from src.users.domain.roles import RoleCode
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserModel
 from src.users.persistence.repository import user_repository
@@ -50,7 +49,6 @@ async def insert_user(session: AsyncSession, user: UserModel) -> UserModel:
         if EMAIL_CONSTRAINT in str(exc.orig):
             raise email_taken() from None
         raise
-    await session.refresh(user, ["role"])
     return user
 
 
@@ -114,7 +112,6 @@ class AuthService:
                 first_name=body.first_name,
                 last_name=body.last_name,
                 mobile=body.mobile,
-                role_id=await user_repository.role_id(session, RoleCode.PLAYER),
                 is_active=False,
             ),
         )

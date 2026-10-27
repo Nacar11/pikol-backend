@@ -4,10 +4,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.users.domain.roles import RoleCode
 from src.users.persistence.models import UserModel
 from src.venues.persistence.models import VenueModel
-from tests.auth.helpers import bearer, login, make_user, make_venue
+from tests.auth.helpers import RoleCode, bearer, login, make_user, make_venue
 
 
 @dataclass

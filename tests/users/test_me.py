@@ -2,9 +2,9 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.domain.groups import FRONT_DESK_CODES
-from src.users.domain.roles import PERMISSIONS, RoleCode
+from src.users.domain.roles import PERMISSIONS
 from src.utils.api import API_PREFIX
-from tests.auth.helpers import AUTH, PASSWORD, bearer, login, make_user, make_venue
+from tests.auth.helpers import AUTH, PASSWORD, RoleCode, bearer, login, make_user, make_venue
 
 ME = f"{API_PREFIX}/users/me"
 

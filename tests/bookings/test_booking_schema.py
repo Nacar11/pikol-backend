@@ -8,23 +8,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.bookings.domain.enums import BookingStatus, BookingType
 from src.bookings.persistence.models import BookingGroupModel
 from src.bookings.persistence.repository import booking_repository
-from src.users.domain.roles import RoleCode
 from src.users.persistence.models import UserModel
 from src.utils.errors import AppError
-from tests.auth.helpers import make_court, make_user, make_venue
+from src.venues.persistence.models import VenueModel
+from tests.auth.helpers import RoleCode, make_court, make_user, make_venue
 from tests.bookings.helpers import insert_booking, next_hour
 
 
 @pytest.fixture
-async def staff(db_session: AsyncSession) -> UserModel:
-    venue = await make_venue(db_session)
+async def venue(db_session: AsyncSession) -> VenueModel:
+    return await make_venue(db_session)
+
+
+@pytest.fixture
+async def staff(db_session: AsyncSession, venue: VenueModel) -> UserModel:
     return await make_user(db_session, role=RoleCode.VENUE_STAFF, venue_id=venue.id)
 
 
 @pytest.fixture
-async def court_id(db_session: AsyncSession, staff: UserModel) -> int:
-    assert staff.venue_id is not None
-    return (await make_court(db_session, staff.venue_id)).id
+async def court_id(db_session: AsyncSession, venue: VenueModel) -> int:
+    return (await make_court(db_session, venue.id)).id
 
 
 async def _book(

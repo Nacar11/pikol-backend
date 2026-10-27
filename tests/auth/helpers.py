@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from httpx import AsyncClient
@@ -6,10 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.security import hash_password
 from src.users.domain.groups import GroupKind
-from src.users.domain.roles import RoleCode
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserModel
-from src.users.persistence.repository import user_repository
 from src.utils.api import API_PREFIX
 from src.venues.persistence.models import VenueModel
 
@@ -17,6 +16,19 @@ if TYPE_CHECKING:
     from src.courts.persistence.models import CourtModel
 
 AUTH = f"{API_PREFIX}/auth"
+
+
+class RoleCode(StrEnum):
+    """Test shorthand for the group a new user lands in (ADR 0003 retired
+    stored roles): PLAYER → Customer, VENUE_MANAGER → the venue's master
+    group, VENUE_STAFF → its Front desk, SUPER_ADMIN → no group."""
+
+    SUPER_ADMIN = "SUPER_ADMIN"
+    VENUE_MANAGER = "VENUE_MANAGER"
+    VENUE_STAFF = "VENUE_STAFF"
+    PLAYER = "PLAYER"
+
+
 PASSWORD = "correct-horse-1"
 _counter = 0
 
@@ -47,8 +59,6 @@ async def make_user(
         password_hash=hash_password(password) if password is not None else None,
         first_name="Test",
         last_name=f"User{_counter}",
-        role_id=await user_repository.role_id(session, role),
-        venue_id=venue_id,
         is_active=active,
         email_verified_at=datetime.now(UTC) if verified else None,
         system_admin=system_admin,
@@ -65,7 +75,6 @@ async def make_user(
         group_id = None
     if group_id is not None:
         await group_repository.add_member(session, group_id, user.id, added_by=None)
-    await session.refresh(user, ["role"])
     return user
 
 

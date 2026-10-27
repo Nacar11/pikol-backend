@@ -1,23 +1,24 @@
 import importlib
+from collections.abc import Callable
 
 import pytest
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import Connection, delete, select
+from sqlalchemy import Connection, delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.domain.groups import FRONT_DESK_CODES, MASTER_DEFAULT_CODES, GroupKind
-from src.users.domain.roles import RoleCode
 from src.users.persistence.models import (
     PermissionModel,
     UserGroupMemberModel,
     UserGroupModel,
     user_group_permissions,
 )
-from tests.auth.helpers import make_user, make_venue
+from tests.auth.helpers import RoleCode, make_user, make_venue
 
-migration = importlib.import_module("src.database.migrations.versions.0006_user_groups")
+user_groups = importlib.import_module("src.database.migrations.versions.0006_user_groups")
+drop_roles = importlib.import_module("src.database.migrations.versions.0007_drop_roles")
 
 
 async def _add_group(
@@ -96,20 +97,47 @@ async def test_new_venue_gets_seeded_groups(db_session: AsyncSession) -> None:
     assert "PARAMETER:Manage" not in MASTER_DEFAULT_CODES
 
 
-async def test_backfill_maps_each_role_to_its_group(db_session: AsyncSession) -> None:
+async def test_roles_round_trip_through_groups(db_session: AsyncSession) -> None:
+    """0007's downgrade rebuilds each user's role from their groups, and
+    0006's backfill maps those roles back to the same groups. Postgres DDL is
+    transactional, so this runs inside the test's rolled-back transaction."""
     venue = await make_venue(db_session)
     player = await make_user(db_session)
     manager = await make_user(db_session, role=RoleCode.VENUE_MANAGER, venue_id=venue.id)
     staff = await make_user(db_session, role=RoleCode.VENUE_STAFF, venue_id=venue.id)
     admin = await make_user(db_session, role=RoleCode.SUPER_ADMIN, system_admin=True)
-    # Start from the pre-0006 state: roles only, no memberships.
+    connection = await db_session.connection()
+
+    def run(step: Callable[[], None]) -> Callable[[Connection], None]:
+        def call(sync: Connection) -> None:
+            with Operations.context(MigrationContext.configure(sync)):
+                step()
+
+        return call
+
+    await connection.run_sync(run(drop_roles.downgrade))
+    restored = dict(
+        (
+            await db_session.execute(
+                text(
+                    "SELECT u.id, r.code || ':' || COALESCE(u.venue_id::text, '-') "
+                    "FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ANY(:ids)"
+                ).bindparams(ids=[player.id, manager.id, staff.id, admin.id])
+            )
+        )
+        .tuples()
+        .all()
+    )
+
+    assert restored == {
+        player.id: "PLAYER:-",
+        manager.id: f"VENUE_MANAGER:{venue.id}",
+        staff.id: f"VENUE_STAFF:{venue.id}",
+        admin.id: "SUPER_ADMIN:-",
+    }
+
     await db_session.execute(delete(UserGroupMemberModel))
-
-    def run(connection: Connection) -> None:
-        with Operations.context(MigrationContext.configure(connection)):
-            migration.backfill_members()
-
-    await (await db_session.connection()).run_sync(run)
+    await connection.run_sync(run(user_groups.backfill_members))
 
     assert await _groups_of(db_session, player.id) == [(GroupKind.CUSTOMER, None)]
     assert await _groups_of(db_session, manager.id) == [(GroupKind.MASTER, venue.id)]
