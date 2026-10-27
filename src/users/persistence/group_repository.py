@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import insert, literal, or_, select
+from sqlalchemy import case, func, insert, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.domain.groups import (
@@ -130,6 +130,61 @@ class GroupRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def list_scoped(
+        self,
+        session: AsyncSession,
+        *,
+        scope: "VenueScope",
+        page: int,
+        limit: int,
+        venue_id: int | None = None,
+        kind: GroupKind | None = None,
+    ) -> tuple[list[UserGroupModel], int]:
+        """Customer first, then each venue's master before its staff groups."""
+        filters = [scope.where(UserGroupModel.venue_id)]
+        if venue_id is not None:
+            filters.append(UserGroupModel.venue_id == venue_id)
+        if kind is not None:
+            filters.append(UserGroupModel.kind == kind)
+        total = (
+            await session.execute(select(func.count()).select_from(UserGroupModel).where(*filters))
+        ).scalar_one()
+        rows = await session.execute(
+            select(UserGroupModel)
+            .where(*filters)
+            .order_by(
+                UserGroupModel.venue_id.nulls_first(),
+                case((UserGroupModel.kind == GroupKind.MASTER, 0), else_=1),
+                UserGroupModel.id,
+            )
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+        return list(rows.scalars()), total
+
+    async def member_counts(self, session: AsyncSession, group_ids: list[int]) -> dict[int, int]:
+        rows = await session.execute(
+            select(UserGroupMemberModel.group_id, func.count())
+            .where(UserGroupMemberModel.group_id.in_(group_ids))
+            .group_by(UserGroupMemberModel.group_id)
+        )
+        counts = {group_id: 0 for group_id in group_ids}
+        counts.update(dict(rows.tuples().all()))
+        return counts
+
+    async def codes_by_group(
+        self, session: AsyncSession, group_ids: list[int]
+    ) -> dict[int, frozenset[str]]:
+        rows = await session.execute(
+            select(user_group_permissions.c.group_id, PermissionModel.code)
+            .join(PermissionModel, PermissionModel.id == user_group_permissions.c.permission_id)
+            .where(user_group_permissions.c.group_id.in_(group_ids))
+        )
+        codes: dict[int, set[str]] = {group_id: set() for group_id in group_ids}
+        for group_id, code in rows.tuples():
+            codes[group_id].add(code)
+        return {group_id: frozenset(c) for group_id, c in codes.items()}
 
     async def groups_for(
         self, session: AsyncSession, user_ids: list[int], *, scope: "VenueScope"

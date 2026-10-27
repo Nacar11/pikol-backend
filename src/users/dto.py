@@ -105,3 +105,33 @@ class AdminUserUpdate(BaseModel):
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     mobile: str | None = Field(default=None, max_length=32)
     is_active: bool | None = None
+
+
+class GroupOut(BaseModel):
+    """`read_only` is from the caller's side: a venue's master group is the
+    owner's to edit, so it is read-only to everyone else (ADR 0003)."""
+
+    id: int
+    name: str
+    kind: GroupKind
+    venue_id: int | None
+    member_count: int
+    permissions: list[str]
+    read_only: bool
+
+
+class GroupCreate(BaseModel):
+    """Always a STAFF group: there is no `kind`, and extra="forbid" makes
+    sending one a 422. `venue_id` is the owner's alone; for anyone else the
+    server takes the active venue and refuses a body that names one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+    venue_id: int | None = None
+
+
+class GroupUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
