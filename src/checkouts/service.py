@@ -7,7 +7,14 @@ from src.bookings.domain.errors import BookingError
 from src.bookings.domain.rules import check_player_window, slot_starts
 from src.bookings.persistence.repository import booking_repository
 from src.bookings.service import CATALOG, booking_service
-from src.checkouts.domain.rules import CheckoutItem, allocate_fee, check_items, is_live
+from src.checkouts.domain.rules import (
+    CheckoutItem,
+    allocate_fee,
+    awaiting_payment,
+    check_items,
+    checkout_display_status,
+    is_live,
+)
 from src.checkouts.dto import CheckoutCreate, CheckoutOut
 from src.checkouts.persistence.models import CheckoutModel
 from src.checkouts.persistence.repository import checkout_repository
@@ -229,11 +236,18 @@ class CheckoutService:
             if payment is not None
             else None
         )
+        now = datetime.now(UTC)
         return CheckoutOut.of(
             checkout,
-            datetime.now(UTC),
+            now,
             checkout_url=payment.checkout_url if payment is not None else None,
             refund_kind=refund.kind if refund is not None else None,
+            awaiting_payment=awaiting_payment(
+                checkout_display_status(checkout.status, checkout.expires_at, now),
+                payment.provider_status if payment is not None else None,
+                payment.created_at if payment is not None else None,
+                now,
+            ),
         )
 
 

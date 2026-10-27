@@ -442,3 +442,63 @@ async def test_paying_on_the_mock_page_lands_on_the_result_page(
     assert paid.status_code == 303
     assert paid.headers["location"].endswith(f"/book/result/{booking['checkout_id']}")
     assert (await _read(client, world, booking["checkout_id"]))["status"] == "SUCCESSFUL"
+
+
+async def test_a_lapsed_hold_with_maya_still_open_is_awaiting_payment(
+    client: AsyncClient, world: World, db_session: AsyncSession, provider: MockProvider
+) -> None:
+    """Maya keeps taking payment for an hour after our 5-minute hold, so the
+    result page must keep confirming rather than settle on "cancelled"."""
+    booking = await hold(client, world.player, world.a.court.id, next_hour())
+    payment_id = await open_maya(client, world.player, booking["checkout_id"])
+    await lapse(db_session, booking["checkout_id"])
+
+    body = await _read(client, world, booking["checkout_id"])
+    assert (body["status"], body["awaiting_payment"]) == ("CANCELLED", True)
+
+    provider.settle(payment_id, "PAYMENT_EXPIRED")
+    await client.post(WEBHOOK, content=provider.webhook_body(payment_id))
+
+    assert (await _read(client, world, booking["checkout_id"]))["awaiting_payment"] is False
+
+
+async def test_a_cancelled_checkout_with_maya_open_is_awaiting_payment(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    booking = await hold(client, world.player, world.a.court.id, next_hour())
+    await open_maya(client, world.player, booking["checkout_id"])
+
+    body = (await action(client, world.player, booking["checkout_id"], "cancel")).json()
+
+    assert (body["status"], body["awaiting_payment"]) == ("CANCELLED", True)
+
+
+async def test_nothing_to_await_without_an_open_attempt(
+    client: AsyncClient, world: World, db_session: AsyncSession, provider: MockProvider
+) -> None:
+    never_opened = await hold(client, world.player, world.a.court.id, next_hour(1))
+    await lapse(db_session, never_opened["checkout_id"])
+    paid = await hold(client, world.player, world.a.court.id, next_hour(2))
+    await pay(client, db_session, provider, world.player, paid["checkout_id"])
+    backed_out = await hold(client, world.player, world.a.court.id, next_hour(3))
+    await pay(
+        client, db_session, provider, world.player, backed_out["checkout_id"], "PAYMENT_CANCELLED"
+    )
+
+    for booking in (never_opened, paid, backed_out):
+        assert (await _read(client, world, booking["checkout_id"]))["awaiting_payment"] is False
+
+
+async def test_maya_sessions_end_after_an_hour(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    booking = await hold(client, world.player, world.a.court.id, next_hour())
+    await open_maya(client, world.player, booking["checkout_id"])
+    await lapse(db_session, booking["checkout_id"], minutes=70)
+    await db_session.execute(
+        update(PaymentModel)
+        .where(PaymentModel.checkout_id == booking["checkout_id"])
+        .values(created_at=datetime.now(UTC) - timedelta(minutes=61))
+    )
+
+    assert (await _read(client, world, booking["checkout_id"]))["awaiting_payment"] is False

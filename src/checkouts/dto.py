@@ -70,6 +70,8 @@ class CheckoutOut(BaseModel):
     # Maya's page, while there is still something to pay for.
     checkout_url: str | None
     refund_kind: RefundKind | None
+    # Maya may still take money (an open attempt): keep confirming.
+    awaiting_payment: bool
     bookings: list[CheckoutBookingOut]
     created_at: datetime
 
@@ -81,6 +83,7 @@ class CheckoutOut(BaseModel):
         *,
         checkout_url: str | None,
         refund_kind: RefundKind | None,
+        awaiting_payment: bool,
     ) -> "CheckoutOut":
         status = checkout_display_status(checkout.status, checkout.expires_at, now)
         return cls(
@@ -95,6 +98,7 @@ class CheckoutOut(BaseModel):
             total_centavos=checkout.total_centavos,
             checkout_url=checkout_url if status == PaymentOutcome.PENDING else None,
             refund_kind=refund_kind,
+            awaiting_payment=awaiting_payment,
             bookings=[CheckoutBookingOut.of(g) for g in checkout.bookings],
             created_at=checkout.created_at,
         )

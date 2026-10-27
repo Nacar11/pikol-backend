@@ -7,6 +7,7 @@ from src.bookings.domain.errors import BookingError
 from src.checkouts.domain.rules import (
     CheckoutItem,
     allocate_fee,
+    awaiting_payment,
     check_items,
     checkout_display_status,
     is_live,
@@ -98,3 +99,14 @@ def test_void_until_manila_midnight() -> None:
 
     assert undo_kind(paid, paid + timedelta(seconds=30)) == RefundKind.VOID
     assert undo_kind(paid, datetime(2026, 10, 28, 16, 0, tzinfo=UTC)) == RefundKind.REFUND
+
+
+def test_awaiting_payment_while_maya_may_still_take_it() -> None:
+    opened = NOW - timedelta(minutes=10)
+
+    assert awaiting_payment(PaymentOutcome.CANCELLED, None, opened, NOW)
+    assert awaiting_payment(PaymentOutcome.PENDING, None, opened, NOW)
+    assert not awaiting_payment(PaymentOutcome.CANCELLED, "PAYMENT_CANCELLED", opened, NOW)
+    assert not awaiting_payment(PaymentOutcome.SUCCESSFUL, None, opened, NOW)
+    assert not awaiting_payment(PaymentOutcome.CANCELLED, None, NOW - timedelta(hours=1), NOW)
+    assert not awaiting_payment(PaymentOutcome.CANCELLED, None, None, NOW)

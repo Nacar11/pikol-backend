@@ -7,7 +7,7 @@ and becomes one booking group.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.bookings.domain.errors import BookingError
 from src.bookings.domain.rules import check_on_the_hour, slot_starts
@@ -15,6 +15,8 @@ from src.payments.domain.enums import PaymentOutcome, RefundKind
 from src.utils.time import MANILA
 
 MAX_CHECKOUT_HOURS = 24
+# Maya's session lives an hour and cannot be closed early (ADR 0004).
+MAYA_SESSION = timedelta(hours=1)
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,25 @@ def checkout_display_status(
     if status == PaymentOutcome.PENDING and not is_live(status, expires_at, now):
         return PaymentOutcome.CANCELLED
     return status
+
+
+def awaiting_payment(
+    status: PaymentOutcome,
+    provider_status: str | None,
+    attempt_opened_at: datetime | None,
+    now: datetime,
+) -> bool:
+    """Could Maya still take money for this checkout? True while an attempt
+    is open — Maya has reported no outcome and its hour has not run out —
+    and nothing has settled the checkout. A hold that ended or a customer who
+    cancelled may still pay on a Maya tab, and the result page must keep
+    confirming (and asking Maya) rather than settle on "cancelled"."""
+    return (
+        status in (PaymentOutcome.PENDING, PaymentOutcome.CANCELLED)
+        and attempt_opened_at is not None
+        and provider_status is None
+        and now < attempt_opened_at + MAYA_SESSION
+    )
 
 
 def undo_kind(paid_at: datetime, now: datetime) -> RefundKind:
