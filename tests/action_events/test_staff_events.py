@@ -136,7 +136,7 @@ async def test_failed_walk_in_records_nothing(
     response = await walk_in(client, world.staff_a, world.a.court.id, start)
 
     assert response.status_code == 409
-    assert await types_of(db_session, checkout_id=held["checkout_id"]) == []  # T3 adds HOLD_PLACED
+    assert await types_of(db_session, checkout_id=held["checkout_id"]) == [T.HOLD_PLACED]
 
 
 async def test_failed_closure_records_nothing(

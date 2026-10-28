@@ -6,6 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.action_events.domain.enums import ActionEventType
+from src.action_events.service import event_service
 from src.bookings.domain.enums import BookingStatus, PaymentMethod, PaymentStatus
 from src.bookings.persistence.models import SLOT_CONSTRAINT, BookingGroupModel
 from src.bookings.persistence.repository import booking_repository
@@ -92,6 +94,13 @@ class PaymentService:
             assert winner is not None
             logger.info("concurrent checkout lost the race: %s", checkout.reference_code)
             return winner.checkout_url
+        await event_service.record(
+            session,
+            ActionEventType.PAYMENT_STARTED,
+            actor=checkout.customer,
+            checkout=checkout,
+            data={"amount_centavos": checkout.total_centavos},
+        )
         await session.commit()
         return opened.checkout_url
 
@@ -162,7 +171,9 @@ class PaymentService:
                 return Effect()
             case PaymentOutcome.REFUNDED:
                 if await payment_repository.refund_for(session, row.id) is None:
-                    self._flag(groups, f"{payment.payment_id} was refunded, but not by us")
+                    await self._flag(
+                        session, groups, f"{payment.payment_id} was refunded, but not by us"
+                    )
                     return Effect()
                 row.status = PaymentOutcome.REFUNDED
                 await checkout_repository.set_status(session, checkout, PaymentOutcome.REFUNDED)
@@ -186,6 +197,15 @@ class PaymentService:
             return
         live = is_live(checkout.status, checkout.expires_at, now)
         await checkout_repository.set_status(session, checkout, outcome)
+        await event_service.record(
+            session,
+            ActionEventType.PAYMENT_FAILED
+            if outcome == PaymentOutcome.FAILED
+            else ActionEventType.PAYMENT_CANCELLED,
+            actor=None,
+            checkout=checkout,
+            occurred_at=now,
+        )
         reason = FAILED_REASON if outcome == PaymentOutcome.FAILED else BACKED_OUT_REASON
         for group in groups:
             if group.booking_status != BookingStatus.PENDING:
@@ -199,8 +219,16 @@ class PaymentService:
                     cancelled_by_user_id=checkout.customer_id,
                     cancellation_reason=reason,
                 )
+                await event_service.record(
+                    session,
+                    ActionEventType.CANCELLED,
+                    actor=None,
+                    group=group,
+                    data={"reason": reason},
+                    occurred_at=now,
+                )
             else:
-                await booking_repository.set_status(session, group, BookingStatus.EXPIRED)
+                await self._expire(session, group, now)
 
     async def _paid(
         self,
@@ -217,17 +245,35 @@ class PaymentService:
             payment.amount_centavos != checkout.total_centavos
             or payment.reference != checkout.reference_code
         ):
-            self._flag(groups, f"payment {payment.payment_id} does not match amount/reference")
+            await self._flag(
+                session, groups, f"payment {payment.payment_id} does not match amount/reference"
+            )
             return Effect()
         if checkout.status not in (PaymentOutcome.PENDING, PaymentOutcome.CANCELLED):
-            self._flag(groups, f"payment {payment.payment_id} after a final status")
+            await self._flag(session, groups, f"payment {payment.payment_id} after a final status")
             return Effect()
         row.status = PaymentOutcome.SUCCESSFUL
+        live = is_live(checkout.status, checkout.expires_at, now)
+        await event_service.record(
+            session,
+            ActionEventType.PAYMENT_SUCCEEDED,
+            actor=None,
+            checkout=checkout,
+            data={
+                "amount_centavos": payment.amount_centavos,
+                "method": PaymentMethod.ONLINE,
+                **({} if live else {"late": True}),
+            },
+            occurred_at=now,
+        )
 
-        if is_live(checkout.status, checkout.expires_at, now):
+        if live:
             for group in groups:
                 await booking_repository.set_status(
                     session, group, BookingStatus.CONFIRMED, **self._paid_fields()
+                )
+                await event_service.record(
+                    session, ActionEventType.CONFIRMED, actor=None, group=group, occurred_at=now
                 )
             await checkout_repository.set_status(session, checkout, PaymentOutcome.SUCCESSFUL)
             return Effect(receipt=checkout)
@@ -251,6 +297,14 @@ class PaymentService:
                             cancellation_reason=None,
                             **self._paid_fields(),
                         )
+                        await event_service.record(
+                            session,
+                            ActionEventType.CONFIRMED,
+                            actor=None,
+                            group=group,
+                            data={"late": True},
+                            occurred_at=now,
+                        )
                 await checkout_repository.set_status(session, checkout, PaymentOutcome.SUCCESSFUL)
                 logger.info("late payment re-acquired its hours: %s", checkout.reference_code)
                 return Effect(receipt=checkout)
@@ -264,10 +318,10 @@ class PaymentService:
         # a crash between here and the refund leaves it in the staff queue.
         for group in groups:
             if group.booking_status == BookingStatus.PENDING:
-                await booking_repository.set_status(session, group, BookingStatus.EXPIRED)
+                await self._expire(session, group, now)
         if checkout.status == PaymentOutcome.PENDING:
             await checkout_repository.set_status(session, checkout, PaymentOutcome.CANCELLED)
-        self._flag(groups, f"refund pending for {payment.payment_id}")
+        await self._flag(session, groups, f"refund pending for {payment.payment_id}")
         return Effect(undo=(row.id, checkout.id))
 
     async def _undo(
@@ -292,7 +346,9 @@ class PaymentService:
         checkout = await checkout_repository.get_for_update(session, checkout_id)
         groups = await self._lock_groups(session, checkout)
         if reference is None:
-            self._flag(groups, f"{kind} failed — refund by hand (payment {payment.payment_id})")
+            await self._flag(
+                session, groups, f"{kind} failed — refund by hand (payment {payment.payment_id})"
+            )
             await session.commit()
             logger.warning("%s failed: %s", kind.lower(), payment.payment_id)
             return
@@ -308,6 +364,14 @@ class PaymentService:
         assert row is not None
         row.status = PaymentOutcome.REFUNDED
         await checkout_repository.set_status(session, checkout, PaymentOutcome.REFUNDED)
+        await event_service.record(
+            session,
+            ActionEventType.VOIDED if kind == RefundKind.VOID else ActionEventType.REFUNDED,
+            actor=None,
+            checkout=checkout,
+            data={"amount_centavos": payment.amount_centavos, "reference": reference},
+            occurred_at=now,
+        )
         for group in groups:
             self._note(
                 group, f"{kind} {reference} — paid after the hold ended and an hour was taken"
@@ -335,12 +399,31 @@ class PaymentService:
     def _paid_fields() -> dict[str, object]:
         return {"payment_status": PaymentStatus.PAID, "payment_method": PaymentMethod.ONLINE}
 
+    @staticmethod
+    async def _expire(session: AsyncSession, group: BookingGroupModel, now: datetime) -> None:
+        """A hold that ended unpaid, dated at its deadline (read before
+        set_status clears it)."""
+        deadline = group.expires_at
+        await booking_repository.set_status(session, group, BookingStatus.EXPIRED)
+        await event_service.record(
+            session,
+            ActionEventType.EXPIRED,
+            actor=None,
+            group=group,
+            occurred_at=deadline or now,
+        )
+
     @classmethod
-    def _flag(cls, groups: list[BookingGroupModel], reason: str) -> None:
+    async def _flag(
+        cls, session: AsyncSession, groups: list[BookingGroupModel], reason: str
+    ) -> None:
         """Into the admin resolution queue (spec §5.5). A flag, not a status."""
         for group in groups:
             group.needs_resolution = True
             cls._note(group, reason)
+            await event_service.record(
+                session, ActionEventType.FLAGGED, actor=None, group=group, data={"reason": reason}
+            )
         logger.warning("checkout needs resolution: %s", reason)
 
     @staticmethod

@@ -6,6 +6,8 @@ from sqlalchemy import ColumnElement, and_, exists, func, not_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.action_events.domain.enums import ActionEventType, ActorKind
+from src.action_events.persistence.repository import action_event_repository
 from src.auth.scope import VenueScope
 from src.bookings.domain.enums import RELEASING, BookingStatus, BookingType
 from src.bookings.domain.rules import new_reference_code
@@ -118,25 +120,27 @@ class BookingRepository:
         was never paid for. The UPDATE re-checks PENDING and the deadline, so
         a group confirmed in between is never expired.
         """
-        candidates = (
-            (
-                await session.execute(
-                    select(BookingSlotModel.booking_group_id)
-                    .join(
-                        BookingGroupModel, BookingGroupModel.id == BookingSlotModel.booking_group_id
-                    )
-                    .where(
-                        BookingSlotModel.court_id == court_id,
-                        BookingSlotModel.starts_at.in_(starts_ats),
-                        BookingGroupModel.booking_status == BookingStatus.PENDING,
-                        BookingGroupModel.expires_at <= now,
-                    )
-                    .distinct()
+        # Read each hold's deadline and checkout BEFORE the UPDATE clears it:
+        # the EXPIRED event is dated at the deadline, not at this cleanup.
+        lapsed = {
+            group_id: (expires_at, checkout_id)
+            for group_id, expires_at, checkout_id in await session.execute(
+                select(
+                    BookingSlotModel.booking_group_id,
+                    BookingGroupModel.expires_at,
+                    BookingGroupModel.checkout_id,
                 )
+                .join(BookingGroupModel, BookingGroupModel.id == BookingSlotModel.booking_group_id)
+                .where(
+                    BookingSlotModel.court_id == court_id,
+                    BookingSlotModel.starts_at.in_(starts_ats),
+                    BookingGroupModel.booking_status == BookingStatus.PENDING,
+                    BookingGroupModel.expires_at <= now,
+                )
+                .distinct()
             )
-            .scalars()
-            .all()
-        )
+        }
+        candidates = list(lapsed)
         if not candidates:
             return []
         expired = (
@@ -160,6 +164,17 @@ class BookingRepository:
                 update(BookingSlotModel)
                 .where(BookingSlotModel.booking_group_id.in_(expired))
                 .values(booking_status=BookingStatus.EXPIRED)
+            )
+        for group_id in expired:
+            deadline, checkout_id = lapsed[group_id]
+            await action_event_repository.insert(
+                session,
+                type=ActionEventType.EXPIRED,
+                actor_kind=ActorKind.SYSTEM,
+                actor_user_id=None,
+                occurred_at=deadline or now,
+                booking_group_id=group_id,
+                checkout_id=checkout_id,
             )
         return list(expired)
 

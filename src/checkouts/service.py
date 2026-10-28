@@ -2,6 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.action_events.domain.enums import ActionEventType
+from src.action_events.service import event_service
 from src.bookings.domain.enums import BookingStatus, BookingType, PaymentStatus
 from src.bookings.domain.errors import BookingError
 from src.bookings.domain.rules import check_player_window, slot_starts
@@ -107,7 +109,7 @@ class CheckoutService:
                     await booking_repository.expire_lapsed(
                         session, item.court_id, [s for s, _ in slots], now
                     )
-                    await booking_repository.insert(
+                    group = await booking_repository.insert(
                         session,
                         fields={
                             "court_id": item.court_id,
@@ -123,6 +125,14 @@ class CheckoutService:
                             "created_by_user_id": customer.id,
                         },
                         slot_prices=slots,
+                    )
+                    await event_service.record(
+                        session,
+                        ActionEventType.HOLD_PLACED,
+                        actor=customer,
+                        group=group,
+                        data={"expires_at": expires_at, "total_centavos": group.total_centavos},
+                        occurred_at=now,
                     )
         except AppError as exc:
             if exc.code != "SLOT_UNAVAILABLE":
@@ -203,6 +213,14 @@ class CheckoutService:
                 cancelled_at=now,
                 cancelled_by_user_id=customer.id,
                 cancellation_reason=CUSTOMER_CANCEL_REASON,
+            )
+            await event_service.record(
+                session,
+                ActionEventType.CANCELLED,
+                actor=customer,
+                group=group,
+                data={"reason": CUSTOMER_CANCEL_REASON},
+                occurred_at=now,
             )
         payment = await payment_repository.latest_for_checkout(session, checkout.id)
         if payment is not None and payment.status == PaymentOutcome.PENDING:
