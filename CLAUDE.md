@@ -77,7 +77,7 @@ conflate them.
 | `src/auth/access.py` | `get_venue_access` (`X-Venue-ID` → `VenueAccess(scope, permissions, is_master)`, per venue, never summed), `require_permission(code)`, `get_venue_scope`, `require_customer` (Customer-group membership) |
 | `src/auth/scope.py` | `VenueScope(all_venues, venue_id).where(column)` |
 | `src/auth/security.py` | argon2 passwords, HS256 access/refresh JWTs, hashed single-use email tokens |
-| `src/auth/service.py` | `auth_service` — register, verify, login, refresh rotation, logout, reset, accept invite; `insert_user` |
+| `src/auth/service.py` | `auth_service` — register, verify, login, `customer_login` (`POST /auth/customer-login`, the booking demo's door: login's checks in the same order, then 403 `NOT_A_CUSTOMER` and no tokens outside the Customer group — no `system_admin` bypass), refresh rotation, logout, reset, accept invite; `insert_user` |
 | `src/auth/rate_limit.py` | `limiter` (slowapi), `LOGIN_LIMIT`, `EMAIL_LIMIT` |
 | `src/email/port.py` | `EmailMessage`, `EmailSender`, `get_email_sender`, `send_quietly` |
 | `src/users/domain/roles.py` | `PERMISSIONS` — every code |
