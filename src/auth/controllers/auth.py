@@ -70,6 +70,16 @@ async def login(
     return await auth_service.login(session, body.email, body.password)
 
 
+@router.post("/customer-login")
+@limiter.limit(LOGIN_LIMIT)
+async def customer_login(
+    request: Request, body: LoginRequest, session: AsyncSession = Depends(get_session)
+) -> TokenPair:
+    """The customer booking demo's sign-in: 403 NOT_A_CUSTOMER, and no
+    tokens, for an account outside the Customer group."""
+    return await auth_service.customer_login(session, body.email, body.password)
+
+
 @router.post("/refresh")
 async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_session)) -> TokenPair:
     return await auth_service.refresh(session, body.refresh_token)

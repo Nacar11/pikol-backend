@@ -165,6 +165,25 @@ class AuthService:
         )
 
     async def login(self, session: AsyncSession, email: str, password: str) -> TokenPair:
+        user = await self._authenticate(session, email, password)
+        return await self._sign_in(session, user)
+
+    async def customer_login(self, session: AsyncSession, email: str, password: str) -> TokenPair:
+        """The customer demo's door: only Customer-group members get a session,
+        whatever staff groups they also hold. No system_admin bypass — the
+        owner books as a customer only if they are one."""
+        user = await self._authenticate(session, email, password)
+        if not await group_repository.is_customer(session, user.id):
+            raise AppError(403, "NOT_A_CUSTOMER", "This sign-in is for customers only.")
+        return await self._sign_in(session, user)
+
+    async def _sign_in(self, session: AsyncSession, user: UserModel) -> TokenPair:
+        user.last_login_at = datetime.now(UTC)
+        pair = await self.issue_pair(session, user)
+        await session.commit()
+        return pair
+
+    async def _authenticate(self, session: AsyncSession, email: str, password: str) -> UserModel:
         """Check order matters: account state is revealed only AFTER a correct
         password, so the distinct errors cannot be used to probe accounts."""
         user = await user_repository.get_by_email(session, email)
@@ -180,11 +199,7 @@ class AuthService:
             raise AppError(403, "EMAIL_NOT_VERIFIED", "Verify your email before logging in.")
         if not user.is_active:
             raise AppError(403, "ACCOUNT_DISABLED", "This account has been disabled.")
-
-        user.last_login_at = datetime.now(UTC)
-        pair = await self.issue_pair(session, user)
-        await session.commit()
-        return pair
+        return user
 
     async def refresh(self, session: AsyncSession, raw: str) -> TokenPair:
         """Rotate: revoke the presented jti and issue a new pair (asima ADR 0002).
