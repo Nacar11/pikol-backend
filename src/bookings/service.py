@@ -2,6 +2,8 @@ from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.action_events.domain.enums import ActionEventType
+from src.action_events.service import event_service
 from src.auth.scope import VenueScope
 from src.bookings.domain.enums import BookingStatus, BookingType, PaymentMethod, PaymentStatus
 from src.bookings.domain.errors import BookingError
@@ -190,6 +192,14 @@ class BookingService:
             },
             slot_prices=slot_prices,
         )
+        await event_service.record(
+            session,
+            ActionEventType.WALK_IN_BOOKED,
+            actor=staff,
+            group=group,
+            data={"notes": body.notes} if body.notes else None,
+            occurred_at=now,
+        )
         await session.commit()
         return group
 
@@ -209,6 +219,7 @@ class BookingService:
     async def mark_paid(
         self,
         session: AsyncSession,
+        staff: UserModel,
         booking_id: int,
         method: PaymentMethod,
         *,
@@ -219,6 +230,13 @@ class BookingService:
         # payment_status, not booking_status — so not a set_status call.
         group.payment_status = PaymentStatus.PAID
         group.payment_method = method
+        await event_service.record(
+            session,
+            ActionEventType.MARKED_PAID,
+            actor=staff,
+            group=group,
+            data={"method": method, "amount_centavos": group.total_centavos},
+        )
         await session.commit()
         await session.refresh(group)
         return group
@@ -226,6 +244,7 @@ class BookingService:
     async def set_outcome(
         self,
         session: AsyncSession,
+        staff: UserModel,
         booking_id: int,
         outcome: BookingStatus,
         *,
@@ -234,6 +253,14 @@ class BookingService:
         group = await self.get_scoped(session, booking_id, scope=scope)
         can_set_outcome(snapshot(group), datetime.now(UTC))
         await booking_repository.set_status(session, group, outcome)
+        await event_service.record(
+            session,
+            ActionEventType.COMPLETED
+            if outcome == BookingStatus.COMPLETED
+            else ActionEventType.NO_SHOW,
+            actor=staff,
+            group=group,
+        )
         await session.commit()
         return group
 
@@ -254,6 +281,13 @@ class BookingService:
         line = f"[resolved by user {staff.id}] {resolution}"
         group.notes = f"{group.notes}\n{line}" if group.notes else line
         group.needs_resolution = False
+        await event_service.record(
+            session,
+            ActionEventType.RESOLVED,
+            actor=staff,
+            group=group,
+            data={"resolution": resolution},
+        )
         await session.commit()
         await session.refresh(group)
         return group
@@ -288,24 +322,31 @@ class BookingService:
         async with session.begin_nested():
             for court_id in court_ids:
                 await booking_repository.expire_lapsed(session, court_id, starts, now)
-                groups.append(
-                    await booking_repository.insert(
-                        session,
-                        fields={
-                            "court_id": court_id,
-                            "player_id": None,
-                            "type": BookingType.MAINTENANCE,
-                            "booking_status": BookingStatus.CONFIRMED,
-                            "payment_status": PaymentStatus.UNPAID,
-                            "price_centavos": 0,
-                            "fee_centavos": 0,
-                            "total_centavos": 0,
-                            "notes": body.reason,
-                            "created_by_user_id": staff.id,
-                        },
-                        slot_prices=[(s, 0) for s in starts],
-                    )
+                closure = await booking_repository.insert(
+                    session,
+                    fields={
+                        "court_id": court_id,
+                        "player_id": None,
+                        "type": BookingType.MAINTENANCE,
+                        "booking_status": BookingStatus.CONFIRMED,
+                        "payment_status": PaymentStatus.UNPAID,
+                        "price_centavos": 0,
+                        "fee_centavos": 0,
+                        "total_centavos": 0,
+                        "notes": body.reason,
+                        "created_by_user_id": staff.id,
+                    },
+                    slot_prices=[(s, 0) for s in starts],
                 )
+                await event_service.record(
+                    session,
+                    ActionEventType.CLOSURE_CREATED,
+                    actor=staff,
+                    group=closure,
+                    data={"reason": body.reason},
+                    occurred_at=now,
+                )
+                groups.append(closure)
         await session.commit()
         return groups
 
@@ -337,6 +378,16 @@ class BookingService:
             cancelled_at=now,
             cancelled_by_user_id=by.id,
             cancellation_reason=reason,
+        )
+        await event_service.record(
+            session,
+            ActionEventType.REOPENED
+            if group.type == BookingType.MAINTENANCE
+            else ActionEventType.CANCELLED,
+            actor=by,
+            group=group,
+            data={"reason": reason},
+            occurred_at=now,
         )
         await session.commit()
         return group

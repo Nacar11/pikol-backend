@@ -148,11 +148,13 @@ async def cancel_booking(
 async def mark_paid(
     booking_id: int,
     body: MarkPaidRequest,
-    _: UserModel = Depends(mark_paid_guard),
+    staff: UserModel = Depends(mark_paid_guard),
     scope: VenueScope = Depends(get_venue_scope),
     session: AsyncSession = Depends(get_session),
 ) -> AdminBookingOut:
-    group = await booking_service.mark_paid(session, booking_id, body.payment_method, scope=scope)
+    group = await booking_service.mark_paid(
+        session, staff, booking_id, body.payment_method, scope=scope
+    )
     return AdminBookingOut.of_admin(group, datetime.now(UTC))
 
 
@@ -160,11 +162,11 @@ async def mark_paid(
 async def set_outcome(
     booking_id: int,
     body: OutcomeRequest,
-    _: UserModel = Depends(set_outcomes),
+    staff: UserModel = Depends(set_outcomes),
     scope: VenueScope = Depends(get_venue_scope),
     session: AsyncSession = Depends(get_session),
 ) -> AdminBookingOut:
-    group = await booking_service.set_outcome(session, booking_id, body.outcome, scope=scope)
+    group = await booking_service.set_outcome(session, staff, booking_id, body.outcome, scope=scope)
     return AdminBookingOut.of_admin(group, datetime.now(UTC))
 
 
