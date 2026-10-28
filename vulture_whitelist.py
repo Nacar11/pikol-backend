@@ -119,3 +119,6 @@ cancellation_cutoff_minutes  # unused variable (src/parameters/domain/parameters
 my_favorites  # unused function (src/favorites/controllers/me.py)
 add_favorite  # unused function (src/favorites/controllers/me.py)
 remove_favorite  # unused function (src/favorites/controllers/me.py)
+booking_events  # unused function (src/bookings/controllers/admin.py)
+my_checkout_events  # unused function (src/checkouts/controllers/customer.py)
+derived  # unused variable (src/action_events/dto.py)

@@ -108,6 +108,7 @@ conflate them.
 | `src/payments/provider.py` | `get_payment_provider` (by `PAYMENT_PROVIDER`; only `mock` today) |
 | `src/payments/service.py` | `payment_service.start_checkout` (one Maya session per checkout, reused), **`sync_payment`** (fetch → record event once → apply to the checkout), late re-acquisition, the simple refund flow, `needs_resolution` flagging, one receipt per checkout |
 | `src/payments/controllers/` | `POST /webhooks/maya`; the mock checkout page with Pay / Decline / Back out / Expire (only if `MOCK_CHECKOUT_ENABLED`) |
+| `src/action_events/service.py` | `event_service.record(session, type, *, actor, group=, checkout=, data=, occurred_at=)` — every booking/payment change writes one **before its commit** (no actor = SYSTEM; the booking's player/checkout's customer = CUSTOMER; else STAFF). Payment events carry the checkout only (one per payment, not per court). `EXPIRED` is dated at the hold's deadline — `booking_repository.expire_lapsed` inserts it directly. `staff_timeline` / `customer_timeline` merge derived "Play started" / "Hold ended"; the customer's hides `FLAGGED`/`RESOLVED` and shows staff as "Venue staff", themselves as "You". Routes: `GET /admin/bookings/{id}/events` (`BOOKING:ReadAny`, scoped), `GET /checkouts/me/{id}/events` (own only). Append-only: the repository inserts and reads |
 
 **Next:** `MayaProvider` — an httpx adapter over `maya_wire` (public key for
 Create Checkout, secret key for Retrieve Payment, sandbox base URL). Its first

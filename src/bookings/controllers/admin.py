@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.action_events.dto import ActionEventOut
+from src.action_events.service import event_service
 from src.auth.access import get_venue_scope, require_permission
 from src.auth.scope import VenueScope
 from src.bookings.domain.enums import BookingStatus, BookingType
@@ -127,6 +129,20 @@ async def get_booking(
 ) -> AdminBookingOut:
     group = await booking_service.get_scoped(session, booking_id, scope=scope)
     return AdminBookingOut.of_admin(group, datetime.now(UTC))
+
+
+@router.get("/{booking_id}/events")
+async def booking_events(
+    booking_id: int,
+    _: UserModel = Depends(read_any),
+    scope: VenueScope = Depends(get_venue_scope),
+    session: AsyncSession = Depends(get_session),
+) -> Page[ActionEventOut]:
+    """What happened to this booking, newest first — its own events and its
+    checkout's payment events, with derived "Play started" / "Hold ended"."""
+    group = await booking_service.get_scoped(session, booking_id, scope=scope)
+    events = await event_service.staff_timeline(session, group, datetime.now(UTC))
+    return Page.of(events, total=len(events), page=1, limit=max(len(events), 1))
 
 
 @router.post("/{booking_id}/cancel")

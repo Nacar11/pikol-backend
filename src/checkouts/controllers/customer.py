@@ -1,6 +1,10 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.action_events.dto import ActionEventOut
+from src.action_events.service import event_service
 from src.auth.access import require_customer
 from src.auth.rate_limit import limiter
 from src.checkouts.dto import CheckoutCreate, CheckoutOut
@@ -55,6 +59,19 @@ async def my_checkout(
     """The hold page and the result page read this."""
     checkout = await checkout_service.get_mine(session, customer, checkout_id)
     return await checkout_service.out(session, checkout)
+
+
+@router.get("/{checkout_id}/events")
+async def my_checkout_events(
+    checkout_id: int,
+    customer: UserModel = Depends(require_customer),
+    session: AsyncSession = Depends(get_session),
+) -> Page[ActionEventOut]:
+    """The tracker on the result page: every booking in this payment,
+    without the venue's internal queue or its staff's names."""
+    checkout = await checkout_service.get_mine(session, customer, checkout_id)
+    events = await event_service.customer_timeline(session, checkout, datetime.now(UTC))
+    return Page.of(events, total=len(events), page=1, limit=max(len(events), 1))
 
 
 @router.post("/{checkout_id}/pay")
