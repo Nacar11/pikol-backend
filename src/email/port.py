@@ -21,9 +21,10 @@ class EmailSender(Protocol):
 def get_email_sender() -> EmailSender:
     """FastAPI dependency. The adapter is chosen by EMAIL_PROVIDER — config,
     never an `if (env)` in application code."""
-    from src.email.adapters import ADAPTERS
+    from src.email.adapters import ADAPTERS, smtp_sender
 
-    return ADAPTERS[get_settings().email_provider]
+    provider = get_settings().email_provider
+    return smtp_sender() if provider == "smtp" else ADAPTERS[provider]
 
 
 async def send_quietly(sender: EmailSender, message: EmailMessage) -> None:

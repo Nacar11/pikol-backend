@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,8 +31,14 @@ class Settings(BaseSettings):
     # Where email links point. No trailing slash — links are built as
     # f"{frontend_base_url}/verify-email?token=...".
     frontend_base_url: str = "http://localhost:3000"
-    # "console" logs each email (development); "memory" collects them for tests.
-    email_provider: Literal["console", "memory"] = "console"
+    # "console" logs each email (development); "memory" collects them for
+    # tests; "smtp" sends for real (any SMTP relay: Resend, SES, Brevo...).
+    email_provider: Literal["console", "memory", "smtp"] = "console"
+    email_from: str = ""  # "Pikol <bookings@example.com>"
+    smtp_host: str = ""
+    smtp_port: int = 587  # STARTTLS
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
     rate_limit_enabled: bool = True
 
     # Payments (ADR 0002). Only the mock exists until the Maya adapter lands,
@@ -70,6 +76,13 @@ class Settings(BaseSettings):
                     f"the origin without one, so it would never match"
                 )
         return origins
+
+    @model_validator(mode="after")
+    def require_smtp_settings(self) -> "Settings":
+        # Fail at boot, not at the first invitation nobody receives.
+        if self.email_provider == "smtp" and not (self.smtp_host and self.email_from):
+            raise ValueError("EMAIL_PROVIDER=smtp needs SMTP_HOST and EMAIL_FROM")
+        return self
 
 
 @lru_cache

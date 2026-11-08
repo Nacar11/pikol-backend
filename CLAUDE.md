@@ -191,8 +191,9 @@ them for the merchant.
   0003). Keep it that way when adding one.
 - **Email is sent after commit, via `send_quietly`**, which logs and swallows
   failures — every email has a resend path.
-- **`EMAIL_PROVIDER=console` logs live tokens.** Development only; Phase 9
-  adds a real sender before go-live.
+- **`EMAIL_PROVIDER=console` logs live tokens.** Development only. Deploy
+  with `EMAIL_PROVIDER=smtp` (`SmtpEmailSender`, stdlib smtplib on a worker
+  thread, STARTTLS): boot fails without `SMTP_HOST` and `EMAIL_FROM`.
 
 ## Testing
 

@@ -67,3 +67,13 @@ def test_frontend_base_url_rejects_trailing_slash(monkeypatch: pytest.MonkeyPatc
         Settings(_env_file=None)
 
     assert "trailing slash" in str(exc.value)
+
+
+def test_smtp_without_host_or_sender_fails_at_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Otherwise the first invitation is silently never delivered."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost:5432/pikol")
+    monkeypatch.setenv("EMAIL_PROVIDER", "smtp")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+
+    with pytest.raises(ValidationError, match="EMAIL_FROM"):
+        Settings(_env_file=None)
