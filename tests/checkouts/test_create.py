@@ -386,3 +386,24 @@ async def test_list_reads_payments_in_one_query_per_page(client: AsyncClient, wo
     assert urls[paid["checkout_id"]] == opened["checkout_url"]
     assert sum(url is None for url in urls.values()) == 2
     assert sum("FROM payments" in s for s in statements) == 1
+
+
+async def test_hold_cap_count_runs_under_the_customers_row_lock(
+    client: AsyncClient, world: World
+) -> None:
+    """Two Pay now taps at once must count one after the other: the
+    customer's row is locked before the live holds are counted."""
+    statements: list[str] = []
+
+    def capture(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        await hold(client, world.player, world.a.court.id, next_hour())
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+
+    lock = next(i for i, s in enumerate(statements) if "FROM users" in s and "FOR UPDATE" in s)
+    count = next(i for i, s in enumerate(statements) if "count(*)" in s and "checkouts" in s)
+    assert lock < count

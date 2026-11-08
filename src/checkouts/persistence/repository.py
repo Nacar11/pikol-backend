@@ -9,6 +9,7 @@ from src.bookings.domain.rules import new_reference_code
 from src.bookings.persistence.repository import REFERENCE_ATTEMPTS
 from src.checkouts.persistence.models import CHECKOUT_REFERENCE_CONSTRAINT, CheckoutModel
 from src.payments.domain.enums import PaymentOutcome
+from src.users.persistence.models import UserModel
 from src.utils.errors import constraint_of
 
 
@@ -43,7 +44,14 @@ class CheckoutRepository:
 
     async def count_live(self, session: AsyncSession, customer_id: int, now: datetime) -> int:
         """Live holds only. Counting PENDING alone would include holds that
-        lapsed weeks ago and lock an abandoning customer out for good."""
+        lapsed weeks ago and lock an abandoning customer out for good.
+
+        Locks the customer's row first and holds it to commit, so two "Pay
+        now" taps at once count one after the other instead of both seeing
+        room under the cap."""
+        await session.execute(
+            select(UserModel.id).where(UserModel.id == customer_id).with_for_update()
+        )
         return (
             await session.execute(
                 select(func.count()).where(
