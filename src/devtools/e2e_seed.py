@@ -22,7 +22,7 @@ from src.courts.service import court_service
 from src.database.session import SessionLocal, engine
 from src.devtools.demo_seed import seed_customers
 from src.users.cli import create_super_admin
-from src.users.dto import MemberAdd
+from src.users.dto import GroupCreate, GroupPermissionsUpdate, MemberAdd
 from src.users.group_service import group_service
 from src.users.persistence.models import UserGroupModel, UserModel
 from src.venues.dto import VenueCreate
@@ -31,6 +31,9 @@ from src.venues.service import venue_service
 PASSWORD = "E2e-password-1"
 OWNER_EMAIL = "owner.e2e@example.com"
 DESK_EMAIL = "desk.e2e@example.com"
+# Holds USER:Manage at Riverside through "E2E Leads", and nothing else — so
+# "E2E Pricing" (PRICE:Manage) is a group they must not be able to join.
+LEAD_EMAIL = "lead.e2e@example.com"
 CUSTOMER_EMAILS = ("customer1.e2e@example.com", "customer2.e2e@example.com")
 VENUES = {"E2E Riverside": 3, "E2E Lakeside": 1}
 
@@ -59,17 +62,7 @@ async def seed(session: AsyncSession) -> None:
                 CourtCreate(name=f"Court {n}", sort_order=n),
                 scope=everywhere,
             )
-    await insert_user(
-        session,
-        UserModel(
-            email=DESK_EMAIL,
-            password_hash=hash_password(PASSWORD),
-            first_name="Dana",
-            last_name="Desk",
-            is_active=True,
-            email_verified_at=datetime.now(UTC),
-        ),
-    )
+    await _staff_user(session, DESK_EMAIL, "Dana", "Desk")
     front_desk = await session.scalar(
         select(UserGroupModel.id).where(
             UserGroupModel.venue_id == venue_ids["E2E Riverside"],
@@ -77,15 +70,47 @@ async def seed(session: AsyncSession) -> None:
         )
     )
     assert front_desk is not None
+    as_owner = VenueAccess(scope=everywhere, permissions=frozenset(), is_master=True)
     await group_service.add_member(
-        session,
-        owner,
-        front_desk,
-        MemberAdd(email=DESK_EMAIL),
-        access=VenueAccess(scope=everywhere, permissions=frozenset(), is_master=True),
+        session, owner, front_desk, MemberAdd(email=DESK_EMAIL), access=as_owner
     )
+    await _seed_lead(session, owner, venue_ids["E2E Riverside"], as_owner)
     await seed_customers(session, CUSTOMER_EMAILS, password=PASSWORD)
     await session.commit()
+
+
+async def _seed_lead(
+    session: AsyncSession, owner: UserModel, venue_id: int, as_owner: VenueAccess
+) -> None:
+    await _staff_user(session, LEAD_EMAIL, "Lee", "Lead")
+    for name, code, member in (
+        ("E2E Leads", "USER:Manage", LEAD_EMAIL),
+        ("E2E Pricing", "PRICE:Manage", None),
+    ):
+        group = await group_service.create(
+            session, owner, GroupCreate(name=name, venue_id=venue_id), scope=as_owner.scope
+        )
+        await group_service.set_permissions(
+            session, owner, group.id, GroupPermissionsUpdate(codes=[code]), access=as_owner
+        )
+        if member is not None:
+            await group_service.add_member(
+                session, owner, group.id, MemberAdd(email=member), access=as_owner
+            )
+
+
+async def _staff_user(session: AsyncSession, email: str, first: str, last: str) -> None:
+    await insert_user(
+        session,
+        UserModel(
+            email=email,
+            password_hash=hash_password(PASSWORD),
+            first_name=first,
+            last_name=last,
+            is_active=True,
+            email_verified_at=datetime.now(UTC),
+        ),
+    )
 
 
 async def _main(url: str) -> None:
@@ -99,5 +124,5 @@ async def _main(url: str) -> None:
 
 if __name__ == "__main__":
     asyncio.run(_main(get_settings().database_url))
-    print(f"Seeded {OWNER_EMAIL}, {DESK_EMAIL} and customers (password {PASSWORD}).")
+    print(f"Seeded {OWNER_EMAIL}, {DESK_EMAIL}, {LEAD_EMAIL} and customers (password {PASSWORD}).")
     sys.exit(0)
