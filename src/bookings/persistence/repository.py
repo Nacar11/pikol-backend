@@ -304,13 +304,28 @@ class BookingRepository:
         return list(rows.unique().scalars().all()), total
 
     async def get_scoped(
-        self, session: AsyncSession, booking_id: int, *, scope: VenueScope
+        self,
+        session: AsyncSession,
+        booking_id: int,
+        *,
+        scope: VenueScope,
+        for_update: bool = False,
     ) -> BookingGroupModel | None:
-        result = await session.execute(
+        """`for_update` locks the group row and re-reads it, so a staff
+        action checks its rule against the state it then writes over — two
+        tabs cancelling and marking paid at once serialise instead of both
+        passing. Only the group row: the eager-loaded court and player are
+        outer joins, which Postgres refuses to lock."""
+        query = (
             select(BookingGroupModel)
             .join(CourtModel, CourtModel.id == BookingGroupModel.court_id)
             .where(BookingGroupModel.id == booking_id, scope.where(CourtModel.venue_id))
         )
+        if for_update:
+            query = query.with_for_update(of=BookingGroupModel).execution_options(
+                populate_existing=True
+            )
+        result = await session.execute(query)
         return result.unique().scalar_one_or_none()
 
 

@@ -154,9 +154,16 @@ class BookingService:
         )
 
     async def get_scoped(
-        self, session: AsyncSession, booking_id: int, *, scope: VenueScope
+        self,
+        session: AsyncSession,
+        booking_id: int,
+        *,
+        scope: VenueScope,
+        for_update: bool = False,
     ) -> BookingGroupModel:
-        group = await booking_repository.get_scoped(session, booking_id, scope=scope)
+        group = await booking_repository.get_scoped(
+            session, booking_id, scope=scope, for_update=for_update
+        )
         if group is None:
             raise booking_not_found()  # out of scope looks exactly like missing
         return group
@@ -212,7 +219,7 @@ class BookingService:
         *,
         scope: VenueScope,
     ) -> BookingGroupModel:
-        group = await self.get_scoped(session, booking_id, scope=scope)
+        group = await self.get_scoped(session, booking_id, scope=scope, for_update=True)
         can_cancel_by_staff(snapshot(group))
         return await self._cancel(session, group, staff, reason, datetime.now(UTC))
 
@@ -225,7 +232,7 @@ class BookingService:
         *,
         scope: VenueScope,
     ) -> BookingGroupModel:
-        group = await self.get_scoped(session, booking_id, scope=scope)
+        group = await self.get_scoped(session, booking_id, scope=scope, for_update=True)
         can_mark_paid(snapshot(group))
         # payment_status, not booking_status — so not a set_status call.
         group.payment_status = PaymentStatus.PAID
@@ -250,7 +257,7 @@ class BookingService:
         *,
         scope: VenueScope,
     ) -> BookingGroupModel:
-        group = await self.get_scoped(session, booking_id, scope=scope)
+        group = await self.get_scoped(session, booking_id, scope=scope, for_update=True)
         can_set_outcome(snapshot(group), datetime.now(UTC))
         await booking_repository.set_status(session, group, outcome)
         await event_service.record(
@@ -275,7 +282,7 @@ class BookingService:
     ) -> BookingGroupModel:
         """Take a booking out of the resolution queue (spec §5.5). The flag
         clears; the record of what was done stays in the notes."""
-        group = await self.get_scoped(session, booking_id, scope=scope)
+        group = await self.get_scoped(session, booking_id, scope=scope, for_update=True)
         if not group.needs_resolution:
             raise AppError(409, "NOT_FLAGGED", "This booking is not awaiting resolution.")
         line = f"[resolved by user {staff.id}] {resolution}"
@@ -359,7 +366,7 @@ class BookingService:
         *,
         scope: VenueScope,
     ) -> BookingGroupModel:
-        group = await self.get_scoped(session, closure_id, scope=scope)
+        group = await self.get_scoped(session, closure_id, scope=scope, for_update=True)
         can_cancel_closure(snapshot(group))
         return await self._cancel(session, group, staff, reason, datetime.now(UTC))
 

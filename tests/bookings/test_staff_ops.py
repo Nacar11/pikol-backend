@@ -3,9 +3,11 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient, Response
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bookings.domain.enums import BookingType
+from src.database.session import engine
 from src.utils.time import manila_day_bounds
 from tests.bookings.conftest import ADMIN, World, hold, manila_date
 from tests.bookings.helpers import insert_booking, next_hour
@@ -276,3 +278,36 @@ async def test_admin_list_is_venue_scoped(
     response = await client.get(BOOKINGS, headers=world.staff_a, params={"limit": 100})
 
     assert theirs.id not in {b["id"] for b in response.json()["data"]}
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("mark-paid", {"payment_method": "CASH"}),
+        ("cancel", {"reason": "Rained out"}),
+    ],
+)
+async def test_staff_actions_lock_the_booking_before_checking_it(
+    client: AsyncClient, world: World, path: str, body: dict[str, Any]
+) -> None:
+    """Cancel and mark-paid from two tabs must serialise: each locks the group
+    row (and re-reads it) before its rule check, or both pass and the
+    booking ends CANCELLED/PAID."""
+    booking = (await walk_in(client, world.staff_a, world.a.court.id, next_hour())).json()
+    statements: list[str] = []
+
+    def capture(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        response = await client.post(
+            f"{BOOKINGS}/{booking['id']}/{path}", headers=world.staff_a, json=body
+        )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+
+    assert response.status_code == 200, response.text
+    locks = [i for i, s in enumerate(statements) if "FOR UPDATE OF booking_groups" in s]
+    writes = [i for i, s in enumerate(statements) if s.startswith("UPDATE booking_groups")]
+    assert locks and writes and locks[0] < writes[0]
