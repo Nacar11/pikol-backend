@@ -32,6 +32,21 @@ def owner_only(detail: str) -> AppError:
     return AppError(403, "FORBIDDEN", detail)
 
 
+def refuse_ungranted_codes(caller: UserModel, codes: frozenset[str], held: frozenset[str]) -> None:
+    """Joining a group grants its codes, so a non-owner may only put people
+    into a group whose codes they hold themselves — the same rule as editing
+    the group's codes (ADR 0003), applied to membership."""
+    if caller.system_admin:
+        return
+    if missing := codes - held:
+        raise AppError(
+            403,
+            "FORBIDDEN",
+            f"You can only add people to groups whose permissions you hold: "
+            f"{', '.join(sorted(missing))}.",
+        )
+
+
 def name_taken() -> AppError:
     return AppError(409, "GROUP_NAME_TAKEN", "This venue already has a group with that name.")
 
@@ -226,9 +241,11 @@ class GroupService:
         group_id: int,
         body: MemberAdd,
         *,
-        scope: VenueScope,
+        access: VenueAccess,
     ) -> MemberOut:
-        group = await self._fillable(session, caller, group_id, scope=scope)
+        group = await self._fillable(session, caller, group_id, scope=access.scope)
+        codes = (await group_repository.codes_by_group(session, [group.id]))[group.id]
+        refuse_ungranted_codes(caller, codes, access.permissions)
         user = await user_repository.get_by_email(session, body.email)
         if user is None:
             # Missing and deleted accounts read the same.

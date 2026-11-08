@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.access import get_venue_scope, require_permission
+from src.auth.access import VenueAccess, get_venue_access, get_venue_scope, require_permission
 from src.auth.dependencies import require_super_admin
 from src.auth.scope import VenueScope
 from src.database.session import get_session
@@ -36,7 +36,9 @@ async def invite_any(
 ) -> UserOut:
     """SUPER_ADMIN only: any staff or master group at any venue (ADR 0003)."""
     everywhere = VenueScope.everything()
-    group = await user_service.invitable_group(session, caller, body.group_id, scope=everywhere)
+    group = await user_service.invitable_group(
+        session, caller, body.group_id, scope=everywhere, held=frozenset()
+    )
     invitation = await user_service.invite(
         session,
         caller,
@@ -54,14 +56,17 @@ async def invite_any(
 async def invite_staff(
     body: StaffInviteRequest,
     caller: UserModel = Depends(manage_users),
-    scope: VenueScope = Depends(get_venue_scope),
+    access: VenueAccess = Depends(get_venue_access),
     session: AsyncSession = Depends(get_session),
     sender: EmailSender = Depends(get_email_sender),
 ) -> UserOut:
     """Invite into a staff group at the ACTIVE venue. The venue is the
     group's, and the group must be one this caller can see — a group at
     another venue is the same 422 as a missing one (ADR 0003)."""
-    group = await user_service.invitable_group(session, caller, body.group_id, scope=scope)
+    scope = access.scope
+    group = await user_service.invitable_group(
+        session, caller, body.group_id, scope=scope, held=access.permissions
+    )
     invitation = await user_service.invite(
         session,
         caller,

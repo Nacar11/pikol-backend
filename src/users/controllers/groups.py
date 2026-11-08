@@ -130,12 +130,12 @@ async def add_member(
     group_id: int,
     body: MemberAdd,
     caller: UserModel = Depends(manage_groups),
-    scope: VenueScope = Depends(get_venue_scope),
+    access: VenueAccess = Depends(get_venue_access),
     session: AsyncSession = Depends(get_session),
 ) -> MemberOut:
     """Add an existing account by exact email — a customer becomes staff here,
     and stays a customer (ADR 0003)."""
-    return await group_service.add_member(session, caller, group_id, body, scope=scope)
+    return await group_service.add_member(session, caller, group_id, body, access=access)
 
 
 @router.delete("/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

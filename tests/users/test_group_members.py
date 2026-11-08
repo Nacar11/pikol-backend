@@ -205,3 +205,39 @@ async def test_cannot_remove_yourself_from_your_last_user_manage(
 
     assert response.status_code == 409
     assert response.json()["code"] == "SELF_LOCKOUT"
+
+
+async def _pricing_group(db_session: AsyncSession, world: World) -> int:
+    pricing = UserGroupModel(kind=GroupKind.STAFF, venue_id=world.a.id, name="Pricing")
+    db_session.add(pricing)
+    await db_session.flush()
+    await group_repository.set_codes(db_session, pricing.id, frozenset({"PRICE:Manage"}))
+    return pricing.id
+
+
+async def test_cannot_join_a_group_with_codes_you_lack(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    """Membership grants the group's codes: a lead holding only USER:Manage
+    must not put themselves into a group holding PRICE:Manage."""
+    pricing = await _pricing_group(db_session, world)
+
+    by_lead = await add(client, world.lead, pricing, world.lead_user.email)
+    by_master = await add(client, world.master, pricing, world.lead_user.email)
+
+    assert by_lead.status_code == 403
+    assert "PRICE:Manage" in by_lead.json()["detail"]
+    assert by_master.status_code == 201
+
+
+async def test_cannot_invite_into_a_group_with_codes_you_lack(
+    client: AsyncClient, world: World, db_session: AsyncSession
+) -> None:
+    pricing = await _pricing_group(db_session, world)
+    person = {"email": "alt@x.com", "first_name": "Alt", "last_name": "Me", "group_id": pricing}
+
+    by_lead = await client.post(f"{ADMIN}/venue-staff", headers=world.lead, json=person)
+    by_master = await client.post(f"{ADMIN}/venue-staff", headers=world.master, json=person)
+
+    assert by_lead.status_code == 403
+    assert by_master.status_code == 201

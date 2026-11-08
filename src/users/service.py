@@ -10,6 +10,7 @@ from src.auth.service import auth_service, insert_user
 from src.parameters.service import parameter_service
 from src.users.domain.groups import GroupKind
 from src.users.dto import AdminUserUpdate, PasswordChangeRequest, ProfileUpdate, UserOut
+from src.users.group_service import refuse_ungranted_codes
 from src.users.persistence.group_repository import group_repository
 from src.users.persistence.models import UserGroupModel, UserModel
 from src.users.persistence.repository import user_repository
@@ -60,7 +61,13 @@ class UserService:
         return Invitation(user, token, days)
 
     async def invitable_group(
-        self, session: AsyncSession, caller: UserModel, group_id: int, *, scope: VenueScope
+        self,
+        session: AsyncSession,
+        caller: UserModel,
+        group_id: int,
+        *,
+        scope: VenueScope,
+        held: frozenset[str],
     ) -> UserGroupModel:
         """The group an invite may target. A group the caller cannot see is
         the same 422 as one that does not exist; a master group is the
@@ -72,6 +79,8 @@ class UserService:
             raise AppError(422, "NOT_A_STAFF_GROUP", "Invitations are for staff groups.")
         if group.kind == GroupKind.MASTER and not caller.system_admin:
             raise AppError(403, "FORBIDDEN", "Only the owner can add venue masters.")
+        codes = (await group_repository.codes_by_group(session, [group.id]))[group.id]
+        refuse_ungranted_codes(caller, codes, held)
         return group
 
     async def invite(

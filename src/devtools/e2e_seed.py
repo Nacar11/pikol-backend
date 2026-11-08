@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth.access import VenueAccess
 from src.auth.scope import VenueScope
 from src.auth.security import hash_password
 from src.auth.service import insert_user
@@ -77,7 +78,11 @@ async def seed(session: AsyncSession) -> None:
     )
     assert front_desk is not None
     await group_service.add_member(
-        session, owner, front_desk, MemberAdd(email=DESK_EMAIL), scope=everywhere
+        session,
+        owner,
+        front_desk,
+        MemberAdd(email=DESK_EMAIL),
+        access=VenueAccess(scope=everywhere, permissions=frozenset(), is_master=True),
     )
     await seed_customers(session, CUSTOMER_EMAILS, password=PASSWORD)
     await session.commit()
