@@ -2,16 +2,26 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from src.config.settings import get_settings
 from src.utils.errors import ErrorResponse
+from src.utils.net import client_ip
 
-# Keyed by client IP, held in process memory — correct for the single Render
-# instance this runs as. Behind Render's proxy, uvicorn must run with
-# --proxy-headers --forwarded-allow-ips, or every request appears to come
-# from the proxy and all clients share one bucket (Phase 9).
-limiter = Limiter(key_func=get_remote_address, enabled=get_settings().rate_limit_enabled)
+
+def _client_key(request: Request) -> str:
+    """The caller's IP behind TRUSTED_PROXY_HOPS proxies (Render: 1).
+
+    Not the socket address — behind a proxy that is the proxy, and every
+    client would share one bucket. Not uvicorn's --proxy-headers with
+    --forwarded-allow-ips=* either — that trusts the LEFTMOST X-Forwarded-For
+    entry, which the caller writes, so a fresh fake IP per attempt would
+    never be limited.
+    """
+    return client_ip(request, get_settings().trusted_proxy_hops)
+
+
+# Held in process memory — correct for the single Render instance this runs as.
+limiter = Limiter(key_func=_client_key, enabled=get_settings().rate_limit_enabled)
 
 LOGIN_LIMIT = "10/minute"
 EMAIL_LIMIT = "5/minute"  # register, verification resend, forgot-password
