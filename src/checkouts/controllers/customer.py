@@ -46,7 +46,7 @@ async def my_checkouts(
     checkouts, total = await checkout_repository.list_for_customer(
         session, customer.id, page=page, limit=limit
     )
-    data = [await checkout_service.out(session, c) for c in checkouts]
+    data = await checkout_service.out_many(session, checkouts)
     return Page.of(data, total=total, page=page, limit=limit)
 
 

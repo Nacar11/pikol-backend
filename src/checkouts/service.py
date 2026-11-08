@@ -248,25 +248,34 @@ class CheckoutService:
         return checkout
 
     async def out(self, session: AsyncSession, checkout: CheckoutModel) -> CheckoutOut:
-        payment = await payment_repository.latest_for_checkout(session, checkout.id)
-        refund = (
-            await payment_repository.refund_for(session, payment.id)
-            if payment is not None
-            else None
-        )
+        return (await self.out_many(session, [checkout]))[0]
+
+    async def out_many(
+        self, session: AsyncSession, checkouts: list[CheckoutModel]
+    ) -> list[CheckoutOut]:
+        """Two queries for the whole page, not two per checkout."""
+        payments = await payment_repository.latest_for_checkouts(session, [c.id for c in checkouts])
+        refunds = await payment_repository.refunds_for(session, [p.id for p in payments.values()])
         now = datetime.now(UTC)
-        return CheckoutOut.of(
-            checkout,
-            now,
-            checkout_url=payment.checkout_url if payment is not None else None,
-            refund_kind=refund.kind if refund is not None else None,
-            awaiting_payment=awaiting_payment(
-                checkout_display_status(checkout.status, checkout.expires_at, now),
-                payment.provider_status if payment is not None else None,
-                payment.created_at if payment is not None else None,
-                now,
-            ),
-        )
+        out = []
+        for checkout in checkouts:
+            payment = payments.get(checkout.id)
+            refund = refunds.get(payment.id) if payment is not None else None
+            out.append(
+                CheckoutOut.of(
+                    checkout,
+                    now,
+                    checkout_url=payment.checkout_url if payment is not None else None,
+                    refund_kind=refund.kind if refund is not None else None,
+                    awaiting_payment=awaiting_payment(
+                        checkout_display_status(checkout.status, checkout.expires_at, now),
+                        payment.provider_status if payment is not None else None,
+                        payment.created_at if payment is not None else None,
+                        now,
+                    ),
+                )
+            )
+        return out
 
 
 checkout_service = CheckoutService()

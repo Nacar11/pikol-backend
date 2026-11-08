@@ -57,6 +57,28 @@ class PaymentRepository:
         )
         return result.scalar_one_or_none()
 
+    async def latest_for_checkouts(
+        self, session: AsyncSession, checkout_ids: list[int]
+    ) -> dict[int, PaymentModel]:
+        """`latest_for_checkout` for a page of checkouts, in one query."""
+        result = await session.execute(
+            select(PaymentModel)
+            .where(PaymentModel.checkout_id.in_(checkout_ids))
+            .distinct(PaymentModel.checkout_id)
+            .order_by(
+                PaymentModel.checkout_id, PaymentModel.created_at.desc(), PaymentModel.id.desc()
+            )
+        )
+        return {p.checkout_id: p for p in result.scalars()}
+
+    async def refunds_for(
+        self, session: AsyncSession, payment_ids: list[int]
+    ) -> dict[int, RefundModel]:
+        result = await session.execute(
+            select(RefundModel).where(RefundModel.payment_id.in_(payment_ids))
+        )
+        return {r.payment_id: r for r in result.scalars()}
+
     async def refund_for(self, session: AsyncSession, payment_id: int) -> RefundModel | None:
         return (
             await session.execute(select(RefundModel).where(RefundModel.payment_id == payment_id))

@@ -2,17 +2,19 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from httpx import AsyncClient, Response
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bookings.domain.enums import BookingStatus
 from src.bookings.persistence.models import BookingGroupModel
 from src.checkouts.persistence.models import CheckoutModel
+from src.database.session import engine
 from src.pricing.persistence.models import PriceRuleModel
 from src.utils.api import API_PREFIX
 from src.utils.time import MANILA
 from tests.bookings.conftest import CHECKOUTS, World, hold, items, manila_date, set_parameter
 from tests.bookings.helpers import next_hour
+from tests.checkouts.helpers import action
 
 AVAILABILITY = f"{API_PREFIX}/availability"
 
@@ -360,3 +362,27 @@ async def test_availability_reports_the_fee_percent(client: AsyncClient, world: 
         params={"venue_id": world.a.venue.id, "date": manila_date(next_hour()).isoformat()},
     )
     assert response.json()["convenience_fee_percent"] == "3.00"
+
+
+async def test_list_reads_payments_in_one_query_per_page(client: AsyncClient, world: World) -> None:
+    """Each row still gets its OWN attempt's URL, but the page costs one
+    payments query — not one per checkout."""
+    paid = await hold(client, world.player, world.a.court.id, next_hour(1))
+    await hold(client, world.player, world.a.court.id, next_hour(2))
+    await hold(client, world.player, world.a.court.id, next_hour(3))
+    opened = (await action(client, world.player, paid["checkout_id"], "pay")).json()
+    statements: list[str] = []
+
+    def capture(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        body = (await client.get(CHECKOUTS, headers=world.player)).json()
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+
+    urls = {c["id"]: c["checkout_url"] for c in body["data"]}
+    assert urls[paid["checkout_id"]] == opened["checkout_url"]
+    assert sum(url is None for url in urls.values()) == 2
+    assert sum("FROM payments" in s for s in statements) == 1
